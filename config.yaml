@@ -1,0 +1,104 @@
+model_list:
+
+# ---------- Tier 1 ----------
+
+- model_name: coder-tier1
+  litellm_params:
+    model: openai/z-ai/glm-5.2
+    api_base: https://integrate.api.nvidia.com/v1
+    api_key: os.environ/NVIDIA_API_KEY
+
+- model_name: coder-tier1
+  litellm_params:
+    model: openai/deepseek-ai/deepseek-v4-pro
+    api_base: https://integrate.api.nvidia.com/v1
+    api_key: os.environ/NVIDIA_API_KEY
+
+- model_name: coder-tier1
+  litellm_params:
+    model: openai/qwen/qwen3.5-397b-a17b
+    api_base: https://integrate.api.nvidia.com/v1
+    api_key: os.environ/NVIDIA_API_KEY
+
+
+# ---------- Tier 2 ----------
+
+- model_name: coder-tier2
+  litellm_params:
+    model: openai/mistralai/mistral-large-3-675b-instruct-2512
+    api_base: https://integrate.api.nvidia.com/v1
+    api_key: os.environ/NVIDIA_API_KEY
+
+- model_name: coder-tier2
+  litellm_params:
+    model: openai/nvidia/nemotron-3-ultra-550b-a55b
+    api_base: https://integrate.api.nvidia.com/v1
+    api_key: os.environ/NVIDIA_API_KEY
+
+- model_name: coder-tier2
+  litellm_params:
+    model: openai/mistralai/mistral-medium-3.5-128b
+    api_base: https://integrate.api.nvidia.com/v1
+    api_key: os.environ/NVIDIA_API_KEY
+
+- model_name: coder-tier2
+  litellm_params:
+    model: openai/deepseek-ai/deepseek-v4-flash
+    api_base: https://integrate.api.nvidia.com/v1
+    api_key: os.environ/NVIDIA_API_KEY
+
+- model_name: coder-tier2
+  litellm_params:
+    model: openai/nvidia/nemotron-3-super-120b-a12b
+    api_base: https://integrate.api.nvidia.com/v1
+    api_key: os.environ/NVIDIA_API_KEY
+
+# ---------- Tier 3 ----------
+
+- model_name: coder-tier3
+  litellm_params:
+    model: openai/mistralai/mistral-small-4-119b-2603
+    api_base: https://integrate.api.nvidia.com/v1
+    api_key: os.environ/NVIDIA_API_KEY
+
+- model_name: coder-tier3
+  litellm_params:
+    model: openai/nvidia/llama-3.3-nemotron-super-49b-v1.5
+    api_base: https://integrate.api.nvidia.com/v1
+    api_key: os.environ/NVIDIA_API_KEY
+
+- model_name: coder-tier3
+  litellm_params:
+    model: openai/minimaxai/minimax-m3
+    api_base: https://integrate.api.nvidia.com/v1
+    api_key: os.environ/NVIDIA_API_KEY
+
+
+router_settings:
+
+  routing_strategy: simple-shuffle
+
+  model_group_alias:
+    coder: coder-tier1
+
+  num_retries: 0
+
+  max_fallbacks: 3
+
+  timeout: 600
+
+  retry_after: 2
+
+  fallbacks:
+
+    - coder:
+        - coder-tier2
+
+    - coder-tier1:
+        - coder-tier2
+
+    - coder-tier2:
+        - coder-tier3
+
+    - coder-tier3:
+        - coder-tier1
