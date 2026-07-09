@@ -62,7 +62,6 @@ def create_app(config_path: str = "forge.yaml") -> FastAPI:
                     config.server.host, config.server.port,
                     len(registry.all()), len(providers))
         metrics.start()  # 동기 — 스키마 초기화 포함 (1회성)
-        await health.start()
         try:
             discovered = await health.discover()
             for name, added in discovered.items():
@@ -72,6 +71,7 @@ def create_app(config_path: str = "forge.yaml") -> FastAPI:
         except Exception as e:
             logger.warning("auto discovery failed: %s", e)
         await health.warmup()  # 콜드 스타트: tier1 워밍업 (§5.13)
+        await health.start()   # 워밍업 후 기동 — 첫 사이클이 tier1을 중복 probe하지 않게
 
         yield
 

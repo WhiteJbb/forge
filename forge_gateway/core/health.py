@@ -91,8 +91,14 @@ class HealthMonitor:
             await asyncio.sleep(interval)
 
     def _idle_targets(self) -> list[ModelEntry]:
-        """last_used가 probe_idle_minutes보다 오래된, 쿨다운이 아닌 모델만 probe 대상."""
-        return [e for e in self._registry.all() if self._is_idle_target(e)]
+        """probe 대상: config에 명시된(라우팅 로테이션에 있는) 유휴 모델만.
+
+        discovery로 등록된 모델은 probe하지 않는다 — 수백 개를 주기 순회하면
+        무료 티어 rate limit을 probe가 소모하는 자해가 된다 (§2-5의 재발 방지).
+        그 모델들의 health는 실제로 라우팅될 때 passive 신호로 확립된다.
+        """
+        return [e for e in self._registry.all()
+                if e.source == "config" and self._is_idle_target(e)]
 
     def _is_idle_target(self, entry: ModelEntry) -> bool:
         h = entry.health
@@ -100,7 +106,10 @@ class HealthMonitor:
         if h.status == "cooldown":
             return False
         idle_seconds = self._config.probe_idle_minutes * 60
-        return time.time() - h.last_used >= idle_seconds
+        # 실트래픽(last_used)뿐 아니라 최근 probe(last_check)도 "확인됨"으로 취급 —
+        # 워밍업 직후 모니터 첫 사이클이 같은 모델을 중복 probe하지 않게
+        last_activity = max(h.last_used, h.last_check)
+        return time.time() - last_activity >= idle_seconds
 
     async def _probe_one(self, entry: ModelEntry) -> None:
         provider = self._providers.get(entry.provider)
@@ -115,11 +124,23 @@ class HealthMonitor:
             logger.warning(f"probe {entry.id}: error {e}")
             return
 
-        if not result.ok and result.error and "429" in result.error:
-            # probe 중 429는 쿨다운/unhealthy로 반영하지 않는다 — probe가 실트래픽 기회를
-            # 뺏으면 안 된다(§5.6-4). 로그만 남기고 상태는 그대로 둔다.
-            logger.info(f"probe {entry.id}: rate limited (429), 상태 변경 없음")
-            return
+        if not result.ok and result.error:
+            err = result.error.lower()
+            if "429" in err:
+                # probe 중 429는 쿨다운/unhealthy로 반영하지 않는다 — probe가 실트래픽
+                # 기회를 뺏으면 안 된다(§5.6-4). 로그만 남기고 상태는 그대로 둔다.
+                entry.health.last_check = time.time()  # 같은 주기 내 재probe 방지
+                logger.info(f"probe {entry.id}: rate limited (429), 상태 변경 없음")
+                return
+            if "timeout" in err or "timed out" in err:
+                # probe 타임아웃은 "느림"이지 "죽음"이 아니다 — 무료 티어 reasoning
+                # 모델은 첫 토큰까지 probe_timeout을 넘기기 일쑤(실측). unhealthy로
+                # 마킹하면 멀쩡한 tier1이 부팅 직후 라우팅에서 빠진다. 판정은
+                # 확정적 오류(4xx/5xx/연결 실패)와 passive 신호에 맡긴다.
+                entry.health.last_check = time.time()  # 같은 주기 내 재probe 방지
+                logger.info(f"probe {entry.id}: slow (>{self._config.probe_timeout}s), "
+                            f"상태 변경 없음")
+                return
 
         entry.health.set_probe_result(result.ok, result.latency_ms)
         if result.ok:
