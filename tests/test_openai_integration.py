@@ -11,6 +11,7 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from forge_gateway.api.anthropic import build_router as build_anthropic_router
 from forge_gateway.api.openai import Deps, build_router
 from forge_gateway.core.analyzer import RequestAnalyzer
 from forge_gateway.core.registry import Registry
@@ -154,8 +155,66 @@ class OpenAIIntegrationTestCase(unittest.TestCase):
         )
         app = FastAPI()
         app.include_router(build_router(deps))
+        app.include_router(build_anthropic_router(deps))
         client = TestClient(app)
         return client, registry, provider, metrics
+
+
+def _stream_chunks(model="nvidia:model-a"):
+    """정상 스트림: role/content 델타 2개 + finish + usage 전용 청크"""
+    return [
+        {"id": "c1", "object": "chat.completion.chunk", "model": model,
+         "choices": [{"index": 0, "delta": {"role": "assistant", "content": "hel"},
+                      "finish_reason": None}]},
+        {"id": "c1", "object": "chat.completion.chunk", "model": model,
+         "choices": [{"index": 0, "delta": {"content": "lo"}, "finish_reason": None}]},
+        {"id": "c1", "object": "chat.completion.chunk", "model": model,
+         "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]},
+        {"id": "c1", "object": "chat.completion.chunk", "model": model, "choices": [],
+         "usage": {"prompt_tokens": 5, "completion_tokens": 2, "total_tokens": 7}},
+    ]
+
+
+class AnthropicEndpointTests(OpenAIIntegrationTestCase):
+    """(/v1/messages 라우터 배선 검증 — 변환 모듈 단위 테스트와 별개의 E2E)"""
+
+    def test_v1_messages_streaming_end_to_end(self):
+        """회귀: OpenAIToAnthropicStream 배선에서 request_model 인자 누락으로
+        스트리밍 /v1/messages가 200 헤더 전송 후 본문 생성에서 크래시하던 버그
+        (Claude Code 실연동에서 발견)."""
+        scripts = {"model-a": [_stream_chunks()]}
+        client, _, provider, _ = self._build(scripts)
+
+        resp = client.post("/v1/messages", json={
+            "model": "claude-test",
+            "max_tokens": 100,
+            "stream": True,
+            "messages": [{"role": "user", "content": "hi"}],
+        })
+        self.assertEqual(resp.status_code, 200)
+        text = resp.text
+        self.assertIn("event: message_start", text)
+        self.assertIn("claude-test", text)  # request_model이 message_start에 반영
+        self.assertIn("event: content_block_delta", text)
+        self.assertIn("event: message_stop", text)
+        self.assertIn(("model-a", "chat_stream"), provider.calls)
+
+    def test_v1_messages_nonstream(self):
+        scripts = {"model-a": [_chat_response(model="nvidia:model-a")]}
+        client, _, provider, _ = self._build(scripts)
+
+        resp = client.post("/v1/messages", json={
+            "model": "claude-test",
+            "max_tokens": 100,
+            "messages": [{"role": "user", "content": "hi"}],
+        })
+        self.assertEqual(resp.status_code, 200)
+        body = resp.json()
+        self.assertEqual(body["type"], "message")
+        self.assertEqual(body["model"], "claude-test")
+        self.assertEqual(body["content"][0]["type"], "text")
+        self.assertIn("hello from", body["content"][0]["text"])
+        self.assertEqual(body["usage"]["input_tokens"], 5)
 
 
 class NonStreamingFailoverTests(OpenAIIntegrationTestCase):

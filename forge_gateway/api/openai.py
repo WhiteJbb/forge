@@ -348,7 +348,8 @@ class ChatPipeline:
         async def sse() -> Any:
             usage_pt, usage_ct = 0, 0
             completed = False
-            conv = (anthropic_convert.OpenAIToAnthropicStream()
+            conv = (anthropic_convert.OpenAIToAnthropicStream(
+                        str(pipeline.body.get("model", "")))
                     if pipeline.dialect == "anthropic" else None)
             try:
                 async for chunk in _prepend(first_chunk, agen):
