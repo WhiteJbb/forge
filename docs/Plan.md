@@ -35,6 +35,16 @@
 | B | capability 벤치마크 시드 — 웹 리서치 → forge.yaml 점수 갱신 (출처 주석) | §5.11-1 | 직접 (웹 검색) | 완료 (MiniMax M3 tier2 승격 포함) |
 | C | Provider Simulator — 429/5xx/지연/절단 주입 mock 서버 + 시나리오 테스트 | §9-1 | Opus 위임 | 완료 — **실 litellm 스택 버그 2건 발견·수정** (Retry-After 미반영, usage 청크 누출) |
 
+### M3 후속: UX 스프린트 (진행중 — 사용자 워크스루 피드백)
+
+| # | 작업 | 담당 | 상태 |
+| --- | --- | --- | --- |
+| U1 | `forge reload` CLI | Sonnet 위임 | 진행중 |
+| U2 | `forge start` 시작 배너 (대시보드/클라이언트 연결 안내) | 직접 | 진행중 |
+| U3 | 지출 가드 온보딩 — init 템플릿 주석 + 유료 자동등록 경고 로그 | 직접+Sonnet | 진행중 |
+| U4 | 최근 요청 피드 — `/v1/stats/recent` + 대시보드 섹션 + explain 실행기 | 직접+Sonnet 위임 | 진행중 |
+| U5 | **정책 간편 수정** — `forge.local.yaml` 오버레이 + `forge guard` CLI (자동 reload) | 직접+Sonnet | 진행중 |
+
 > **M2.5 완료** (2026-07-09): 전체 153건 테스트 3회 연속 통과, editable install + `forge` CLI 동작.
 > **다음: 사용자 통합 검증** — 실키(NVIDIA)로 `forge doctor`/`forge start` + Cline(OpenAI) +
 > Claude Code(`ANTHROPIC_BASE_URL`) 실연동. 검증 후 M3(Dashboard, Prometheus, PostgreSQL) 착수.
