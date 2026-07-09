@@ -37,6 +37,15 @@ pre-1.0 (see [DESIGN.md](DESIGN.md) for the milestone plan); versioning is not y
   catalog (OpenRouter, Groq, Mistral, DeepSeek, OpenAI, Anthropic, Ollama — in addition to NVIDIA)
   is registered and its models discovered at boot as soon as a matching API key is found in
   `.env` / the environment, with no `forge.yaml` edit required.
+- Four more auto-registered providers: Cerebras, Gemini (Google AI Studio), and SambaNova join
+  the built-in catalog, plus Z.ai (GLM) as an opt-in paid provider. `registry.merge_discovered`
+  now prices OpenRouter's `:free`-suffixed models at $0 regardless of the provider's own billing
+  state, instead of requiring a hand-maintained list.
+- `PROVIDER_CATALOG` entries can carry a `capability_seed` — benchmark-sourced tier/capability
+  scores for specific model IDs (e.g. `cerebras:zai-glm-4.7`, `gemini:models/gemini-3-flash-preview`)
+  that apply automatically the moment the provider auto-registers, with no `forge.yaml` edit
+  needed. Seeded entries are treated as config-sourced, so they're also eligible for active
+  health probing (previously only real traffic could establish health for auto-discovered models).
 
 ### Fixed
 
@@ -45,6 +54,11 @@ pre-1.0 (see [DESIGN.md](DESIGN.md) for the milestone plan); versioning is not y
 - `Retry-After` header handling for litellm 1.91.x (the header lives on
   `e.litellm_response_headers`, not the top-level exception).
 - Spurious `usage`-only streaming chunks with empty `choices` were leaking through to clients.
+- SambaNova was briefly (and incorrectly) marked as a recurring free-tier provider. It only
+  offers a one-time ~$5 trial credit; once exhausted, requests fail with `402
+  CREDITS_EXHAUSTED` regardless of billing status. It's now registered as a regular paid
+  provider (excluded by `allow_paid: false`), while its benchmark-based capability scores are
+  kept since those are independent of pricing.
 
 ## [0.3.0.dev0] - 2026-07-09
 
