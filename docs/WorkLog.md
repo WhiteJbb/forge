@@ -4,6 +4,27 @@
 
 ---
 
+## 2026-07-09 — M2 구현 (feat/m2-intelligence)
+
+### 한 일
+
+1. **직접 구현**: Policy Engine(§5.4 — first-match 평가, tier/모델/속성 셀렉터, constraints 누적, 직접 지정 모델에도 적용), Scheduler 그룹 라우팅 + provider_filter, 스로틀 파이프라인 배선(peek→consume→slot), `/v1/messages` 엔드포인트(ChatPipeline dialect), `/v1/route/explain`(핀 비변경 드라이런), `/admin/reload`(원자적 교체·health 이관·discovered 보존·60초 지연 close)
+2. **위임 구현**: Anthropic 변환 모듈(Opus, 24케이스 — 529 중단 후 재개), 선제 스로틀(Opus, 14케이스), 가격표 폴백(Sonnet, 12케이스 — 자체 프로브로 폴스루 버그 수정), CLI(Sonnet, 13케이스 — doctor는 실 NVIDIA 엔드포인트 검증)
+3. forge.yaml 정책 예시(docs-prefer-writers + default), README M2 갱신(Claude Code 연동)
+4. 검증: unittest 141건 통과(3회 반복으로 플레이키 확인 — 안정), 스모크 24항목 통과(reload 왕복 포함)
+
+### 오류/수정
+
+- Opus 에이전트 1개가 API 과부하(529)로 중단 → SendMessage로 재개해 완료
+- 권한 분류기 장애로 셸 실행이 장시간 차단 → 비셸 작업(README, 배선 코드)으로 우회 후 재개
+- 테스트 1회 일시 실패(재현 불가, 3회 연속 통과) — 재발 시 추적
+
+### 남은 것 (M2 잔여)
+
+- [ ] Ollama/OpenRouter/Anthropic 실검증 (사용자 키/로컬 필요)
+- [ ] Claude Code 실연동 스모크 (`ANTHROPIC_BASE_URL=http://127.0.0.1:4000`)
+- [ ] capability 벤치마크 시드 (리서치), Provider Simulator (후속)
+
 ## 2026-07-09 — M1 구현 (feat/m1-foundation)
 
 ### 한 일

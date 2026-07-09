@@ -123,6 +123,70 @@ class AnalyzerConfig(BaseModel):
     llm_fallback: bool = False
 
 
+class PolicyWhen(BaseModel):
+    """정책 매칭 조건 — 지정된 필드만 검사한다 (전부 만족 시 매칭, §5.4)"""
+
+    task: list[str] = Field(default_factory=list)   # 빈 리스트 = task 무관
+    model: Optional[str] = None                     # 클라이언트가 보낸 model 값과 일치
+    client: Optional[str] = None                    # User-Agent 부분 문자열 (대소문자 무시)
+    min_prompt_tokens: Optional[int] = None
+    max_prompt_tokens: Optional[int] = None
+
+    @field_validator("task")
+    @classmethod
+    def _valid_tasks(cls, v: list[str]) -> list[str]:
+        valid = {"coding", "debug", "refactor", "documentation", "testing"}
+        unknown = set(v) - valid
+        if unknown:
+            raise ValueError(f"unknown tasks {unknown}, valid: {sorted(valid)}")
+        return v
+
+
+class PolicyConstraints(BaseModel):
+    """하드 제약 — 매칭 여부와 무관하게 항상 누적 적용 (§5.4)"""
+
+    allow_paid: Optional[bool] = None
+    max_cost_per_request: Optional[float] = None
+    exclude_providers: list[str] = Field(default_factory=list)
+
+
+class PolicyRule(BaseModel):
+    """`when` 있는 정책은 first-match로 route를 결정하고,
+    `when` 없는 정책은 constraints 전용으로 항상 적용된다."""
+
+    name: str
+    when: Optional[PolicyWhen] = None
+    route: Optional["PolicyRoute"] = None
+    constraints: Optional[PolicyConstraints] = None
+
+    @model_validator(mode="after")
+    def _has_effect(self) -> "PolicyRule":
+        if self.route is None and self.constraints is None:
+            raise ValueError(f"policy {self.name!r} has neither route nor constraints")
+        return self
+
+
+class PolicyRoute(BaseModel):
+    """후보 그룹의 순서 목록 — 항목은 tier 이름 / 모델 id / 속성 셀렉터 dict (§5.4)"""
+
+    prefer: list = Field(default_factory=list)
+    fallback: list = Field(default_factory=list)
+
+    @field_validator("prefer", "fallback")
+    @classmethod
+    def _valid_items(cls, v: list) -> list:
+        for item in v:
+            if not isinstance(item, (str, dict)):
+                raise ValueError(
+                    f"route item must be tier name, model id, or attribute selector dict, "
+                    f"got {type(item).__name__}: {item!r}"
+                )
+        return v
+
+
+PolicyRule.model_rebuild()  # "PolicyRoute" 전방 참조 해석
+
+
 class ForgeConfig(BaseModel):
     version: int = 1
     server: ServerConfig = Field(default_factory=ServerConfig)
@@ -135,6 +199,7 @@ class ForgeConfig(BaseModel):
     metrics: MetricsConfig = Field(default_factory=MetricsConfig)
     health: HealthConfig = Field(default_factory=HealthConfig)
     analyzer: AnalyzerConfig = Field(default_factory=AnalyzerConfig)
+    policies: list[PolicyRule] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def _model_providers_exist(self) -> "ForgeConfig":

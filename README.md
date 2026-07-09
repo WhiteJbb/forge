@@ -10,16 +10,20 @@ Cline / Aider / Continue / RooCode ──▶ localhost:4000 ──▶ Forge ─�
 
 **Why not just LiteLLM?** LiteLLM routes by model group. Forge routes by **request content**: it detects what you're doing (refactoring? debugging? writing docs?), filters out models that can't handle the request (no function calling? context too small?), keeps a conversation pinned to one model for prompt-cache hits, and scores the rest on live health, latency, and capability. Every routing decision is explainable — no black-box learned router.
 
-> **Status: pre-release (v0.2-dev).** Core routing, failover, and metrics work. Policy engine, Anthropic (`/v1/messages`) support, and the dashboard UI are in progress. Expect breaking changes.
+> **Status: pre-release (v0.3-dev).** Core routing, failover, policies, and Anthropic-format support work. The dashboard UI is still in progress. Expect breaking changes.
 
 ## Features
 
 - **OpenAI-compatible API** — `/v1/chat/completions` (streaming included), `/v1/embeddings`, `/v1/models`
+- **Anthropic-compatible API** — `/v1/messages` with full streaming-event and tool-use conversion, so Claude Code can use any provider behind Forge
+- **Policy engine** — manage *policies*, not models: first-match YAML rules pick candidate pools by task/client/context size, with hard constraints like `allow_paid: false`
 - **Task-aware routing** — request analysis → capability matrix → best model, with `auto:refactor`-style hints when you know better
 - **Hard compatibility filter** — requests needing tools / JSON mode / vision / large context never land on a model that can't serve them
 - **Session affinity** — the same conversation stays on the same model (prompt-cache hits, consistent behavior); moves only on failover
+- **Proactive rate limiting** — per-provider token buckets steer traffic away *before* the 429 happens; reactive cooldowns remain as the safety net
 - **Self-healing failover** — 429 → instant cooldown (honors `Retry-After`) → next candidate; context-overflow → retry on a bigger-context model; all invisible to the client
-- **Auto discovery** — new models on your provider are registered automatically at boot
+- **Explainable decisions** — `POST /v1/route/explain` dry-runs any request and shows the matched policy, every exclusion reason, and the score table
+- **Auto discovery & hot reload** — new provider models register at boot; edit `forge.yaml` and `POST /admin/reload` without dropping in-flight requests
 - **Real metrics** — per-model latency (TTFT for streams), success rate, token usage, cost — stored locally in SQLite
 
 ## Quickstart
@@ -72,7 +76,12 @@ export OPENAI_API_KEY=forge
 aider --model openai/auto
 ```
 
-**Claude Code** — needs the Anthropic-format endpoint (`/v1/messages`), which lands in the next milestone.
+**Claude Code**
+```bash
+export ANTHROPIC_BASE_URL=http://127.0.0.1:4000
+export ANTHROPIC_API_KEY=forge        # or your FORGE_API_KEY
+```
+Claude Code speaks the Anthropic Messages API; Forge converts it (tool use and streaming events included) and routes to whatever provider your policies choose.
 
 Every response carries routing metadata in headers: `X-Forge-Model`, `X-Forge-Tier`, `X-Forge-Task`, `X-Forge-Attempt`.
 
@@ -81,11 +90,14 @@ Every response carries routing metadata in headers: `X-Forge-Model`, `X-Forge-Ti
 | Endpoint | Description |
 | --- | --- |
 | `POST /v1/chat/completions` | OpenAI-compatible chat, streaming + transparent failover |
+| `POST /v1/messages` | Anthropic-compatible chat (Claude Code) |
+| `POST /v1/route/explain` | Dry-run: matched policy, exclusion reasons, score table |
 | `POST /v1/embeddings` | Embeddings (explicit model id) |
 | `GET /v1/models` | Model pool + `auto` aliases |
 | `GET /health` | Gateway + per-model health |
 | `GET /v1/stats` | Usage / latency / cost metrics (JSON) |
-| `GET /dashboard` | Dashboard data (JSON) |
+| `GET /dashboard` | Dashboard data (JSON), incl. throttle state |
+| `POST /admin/reload` | Hot-reload `forge.yaml` (loopback only) |
 | `POST /admin/cooldown/{model}/clear` | Manually clear a cooldown (loopback only) |
 
 ## Privacy

@@ -95,22 +95,31 @@ class Scheduler:
         analysis: AnalysisResult,
         exclude: Optional[set[str]] = None,
         min_context_window: int = 0,
+        groups: Optional[list[list[ModelEntry]]] = None,
+        provider_filter=None,  # Callable[[str], bool] — 스로틀 peek (§5.13)
     ) -> tuple[ModelEntry, dict]:
         """최적 모델을 선택한다. 후보가 없으면 NoCandidateError.
 
+        groups: Policy Engine이 준 순서 있는 후보 그룹 (§5.4). None이면
+        기본 라우팅(tier1→2→3) — M1과 동일한 하위 호환.
         min_context_window: context_length_exceeded 상향 failover 시,
         실패한 모델보다 큰 컨텍스트 창을 요구 (§7)
         """
         exclude = exclude or set()
         feature_rejected = 0
         context_rejected = 0
+        throttled = 0
 
-        # 세션 고정은 tier 순서보다 우선한다 — 고정 모델이 어느 tier에 있든
-        # (제외 안 됨 + 가용 + 하드 필터 통과)면 스코어링 없이 그대로 (§5.5-1).
-        # tier 루프 안에서 확인하면 상위 tier가 가용해지는 순간 하위 tier 핀이 무시된다.
+        if groups is None:
+            groups = [self._registry.by_tier(t) for t in TIER_ORDER]
+        allowed_ids = {e.id for g in groups for e in g}
+
+        # 세션 고정은 그룹 순서보다 우선한다 — 고정 모델이 어느 그룹에 있든
+        # (정책 후보 포함 + 제외 안 됨 + 가용 + 하드 필터 통과)면 스코어링 없이 그대로 (§5.5-1).
+        # 그룹 루프 안에서 확인하면 상위 그룹이 가용해지는 순간 하위 그룹 핀이 무시된다.
         if self._config.scheduler.session_affinity and analysis.session_key:
             pinned_id = self._affinity.get(analysis.session_key)
-            if pinned_id and pinned_id not in exclude:
+            if pinned_id and pinned_id not in exclude and pinned_id in allowed_ids:
                 pinned = self._registry.get(pinned_id)
                 if (
                     pinned is not None
@@ -126,10 +135,15 @@ class Scheduler:
                         "score": None,
                     }
 
-        for tier in TIER_ORDER:
+        for group in groups:
             candidates = []
-            for entry in self._registry.by_tier(tier):
+            for entry in group:
                 if entry.id in exclude or not entry.health.is_available():
+                    continue
+                if provider_filter is not None and not provider_filter(entry.provider):
+                    # 선제 스로틀: rpm 버킷이 빈 provider는 후보에서 잠시 제외 —
+                    # 429를 맞기 전에 트래픽이 다른 provider로 분산된다 (§5.13)
+                    throttled += 1
                     continue
                 if not analysis.required_features <= entry.features:
                     feature_rejected += 1
@@ -153,7 +167,7 @@ class Scheduler:
 
             self._affinity.pin(analysis.session_key, selected.id)
             return selected, {
-                "tier": tier,
+                "tier": selected.tier,
                 "task": analysis.task,
                 "selected_by": "score",
                 "score": round(best_score, 2),
@@ -162,7 +176,12 @@ class Scheduler:
                 ],
             }
 
-        # 전 tier 소진 — 탈락 사유를 구분해 반환 (§5.5-0)
+        # 전 그룹 소진 — 탈락 사유를 구분해 반환 (§5.5-0)
+        if throttled and not feature_rejected and not context_rejected:
+            raise NoCandidateError(
+                "all candidate providers are rate-throttled — retry shortly",
+                status_code=503,
+            )
         if feature_rejected and not context_rejected:
             missing = ", ".join(sorted(analysis.required_features))
             raise NoCandidateError(
@@ -174,6 +193,69 @@ class Scheduler:
                 f"({analysis.est_prompt_tokens} tokens)", status_code=400,
             )
         raise NoCandidateError("no available models", status_code=503)
+
+    def explain(
+        self,
+        analysis: AnalysisResult,
+        groups: Optional[list[list[ModelEntry]]] = None,
+        provider_filter=None,
+    ) -> dict:
+        """select()와 동일한 판정을 상태 변경 없이 수행해 사유를 반환한다 (§5.8 route/explain).
+
+        세션 핀을 이동시키지 않고, 동률권 랜덤 대신 최고점을 결정적으로 보고한다.
+        """
+        if groups is None:
+            groups = [self._registry.by_tier(t) for t in TIER_ORDER]
+        allowed_ids = {e.id for g in groups for e in g}
+
+        pinned_id = None
+        if self._config.scheduler.session_affinity and analysis.session_key:
+            pinned_id = self._affinity.get(analysis.session_key)
+
+        out_groups = []
+        would_select = None
+        for group in groups:
+            rows = []
+            best: Optional[tuple[float, ModelEntry]] = None
+            for entry in group:
+                reason = None
+                if not entry.health.is_available():
+                    reason = f"unavailable ({entry.health.status})"
+                elif provider_filter is not None and not provider_filter(entry.provider):
+                    reason = "provider rate-throttled"
+                elif not analysis.required_features <= entry.features:
+                    missing = analysis.required_features - entry.features
+                    reason = f"missing features: {', '.join(sorted(missing))}"
+                elif not self._context_fits(entry, analysis.est_prompt_tokens, 0):
+                    reason = (f"context too small ({entry.context_window} "
+                              f"< est {analysis.est_prompt_tokens} tokens)")
+
+                if reason:
+                    rows.append({"model": entry.id, "excluded": reason})
+                    continue
+                score = self._score(entry, analysis)
+                rows.append({"model": entry.id, "score": round(score, 2)})
+                if best is None or score > best[0]:
+                    best = (score, entry)
+            out_groups.append(rows)
+            if would_select is None and best is not None:
+                would_select = {"model": best[1].id, "tier": best[1].tier,
+                                "score": round(best[0], 2), "selected_by": "score"}
+
+        # 핀이 유효하면 스코어보다 우선 — select()와 동일 규칙 (§5.5-1)
+        if pinned_id and pinned_id in allowed_ids:
+            pinned = self._registry.get(pinned_id)
+            if (pinned is not None and pinned.health.is_available()
+                    and analysis.required_features <= pinned.features
+                    and self._context_fits(pinned, analysis.est_prompt_tokens, 0)):
+                would_select = {"model": pinned.id, "tier": pinned.tier,
+                                "score": None, "selected_by": "session_affinity"}
+
+        return {
+            "session_pin": pinned_id,
+            "groups": out_groups,
+            "would_select": would_select,
+        }
 
     def _context_fits(self, entry: ModelEntry, est_tokens: int, min_window: int) -> bool:
         if min_window and (entry.context_window or 0) <= min_window:

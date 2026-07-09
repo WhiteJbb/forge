@@ -85,3 +85,19 @@ health:
 
 analyzer:
   llm_fallback: false
+
+# 정책 라우팅 (§5.4) — 위에서부터 first-match. 마지막 정책이 기본 라우팅.
+# when 없는 정책은 constraints 전용(항상 적용). 예:
+#   - name: free-only
+#     constraints: { allow_paid: false }
+policies:
+  - name: docs-prefer-writers
+    when: { task: [documentation] }
+    route:
+      prefer: [ "nvidia:qwen/qwen3.5-397b-a17b", tier1 ]
+      fallback: [ tier2, tier3 ]
+  - name: default
+    when: {}
+    route:
+      prefer: [ tier1 ]
+      fallback: [ tier2, tier3 ]

@@ -18,8 +18,10 @@ from fastapi.responses import JSONResponse, StreamingResponse
 
 from ..core.analyzer import RequestAnalyzer
 from ..core.metrics import MetricsEngine
+from ..core.policy import PolicyEngine, RoutePlan
 from ..core.registry import ModelEntry, Registry
 from ..core.scheduler import NoCandidateError, Scheduler
+from ..core.throttle import ProviderThrottle
 from ..core.types import AnalysisResult
 from ..providers.base import (
     ContextLengthExceeded,
@@ -33,6 +35,7 @@ from ..providers.base import (
 )
 from ..settings import ForgeConfig
 from ..storage.base import RequestMetric
+from . import anthropic_convert
 
 logger = logging.getLogger("forge.api")
 
@@ -50,6 +53,8 @@ class Deps:
     analyzer: RequestAnalyzer
     metrics: MetricsEngine
     providers: dict[str, Provider]
+    policy: Optional[PolicyEngine] = None  # None이면 기본 tier 라우팅 (하위 호환)
+    throttle: Optional[ProviderThrottle] = None  # None이면 선제 스로틀 없음
 
 
 def _utcnow_iso() -> str:
@@ -77,13 +82,32 @@ def _compute_cost(entry: ModelEntry, prompt_tokens: int, completion_tokens: int)
     return (prompt_tokens * pin + completion_tokens * pout) / 1_000_000
 
 
-def _forge_headers(entry: ModelEntry, tier: str, task: str, attempt: int) -> dict[str, str]:
-    return {
+def _forge_headers(entry: ModelEntry, tier: str, task: str, attempt: int,
+                   policy: Optional[str] = None) -> dict[str, str]:
+    headers = {
         "X-Forge-Model": entry.id,
         "X-Forge-Tier": tier,
         "X-Forge-Task": task,
         "X-Forge-Attempt": str(attempt),
     }
+    if policy:
+        headers["X-Forge-Policy"] = policy
+    return headers
+
+
+def _anthropic_event(name: str, data: dict) -> bytes:
+    """Anthropic SSE는 event: 줄을 포함한다 (§5.8)"""
+    return f"event: {name}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n".encode()
+
+
+async def _release_slot(slot_cm) -> None:
+    """수동 진입한 스로틀 슬롯을 best-effort 해제 (스트리밍 경로 전용)"""
+    if slot_cm is None:
+        return
+    try:
+        await slot_cm.__aexit__(None, None, None)
+    except Exception:
+        pass
 
 
 def _openai_error(message: str, status_code: int, err_type: str = "forge_error") -> JSONResponse:
@@ -100,12 +124,18 @@ async def _watch_disconnect(request: Request) -> None:
 
 
 class ChatPipeline:
-    """chat completion 한 건의 선택→호출→failover→기록 수명주기"""
+    """chat completion 한 건의 선택→호출→failover→기록 수명주기.
 
-    def __init__(self, deps: Deps, request: Request, body: dict[str, Any]):
+    dialect="anthropic"이면 응답을 Anthropic Messages 포맷으로 역변환한다 (§5.8).
+    입력 body는 이미 내부 표준(OpenAI) 포맷이어야 한다 — 변환은 api/anthropic.py 책임.
+    """
+
+    def __init__(self, deps: Deps, request: Request, body: dict[str, Any],
+                 dialect: str = "openai"):
         self.deps = deps
         self.request = request
         self.body = body
+        self.dialect = dialect
         self.request_id = uuid.uuid4().hex
         self.stream: bool = bool(body.get("stream", False))
         self.client_wants_usage = bool(
@@ -113,37 +143,81 @@ class ChatPipeline:
         )
         self.deadline = time.monotonic() + deps.config.timeouts.total_deadline
 
+    def _error(self, message: str, status_code: int, err_type: str) -> JSONResponse:
+        if self.dialect == "anthropic":
+            return JSONResponse(
+                status_code=status_code,
+                content={"type": "error",
+                         "error": {"type": err_type, "message": message}},
+            )
+        return _openai_error(message, status_code, err_type)
+
     # --- 진입점 ---
 
     async def run(self):
         model = str(self.body.get("model", "auto"))
         task_hint, _ = _extract_task_hint(self.request, model)
         analysis = self.deps.analyzer.analyze(self.body, task_hint=task_hint)
+        user_agent = self.request.headers.get("user-agent", "")
+        max_tokens = self.body.get("max_tokens")
 
-        # 실제 모델 id 지정 시 라우팅 우회 — failover 없음, constraints는 M2 (§5.4)
+        # 실제 모델 id 지정 시 라우팅 우회 — failover 없음, constraints는 여전히 적용 (§5.4)
         direct = self.deps.registry.resolve_client_model(model)
         if direct is not None:
+            if self.deps.policy is not None and not self.deps.policy.entry_passes_constraints(
+                direct, analysis, requested_model=model,
+                user_agent=user_agent, max_tokens=max_tokens,
+            ):
+                return self._error(
+                    f"model {model!r} is excluded by policy constraints",
+                    403, "policy_constraint",
+                )
             return await self._attempt_loop(analysis, forced=direct)
-        # 알 수 없는 모델명은 auto로 간주하고 정책 라우팅 (§11 별칭 정책)
-        return await self._attempt_loop(analysis)
 
-    async def _attempt_loop(self, analysis: AnalysisResult, forced: Optional[ModelEntry] = None):
+        # 알 수 없는 모델명은 auto로 간주하고 정책 라우팅 (§11 별칭 정책)
+        plan: Optional[RoutePlan] = None
+        if self.deps.policy is not None:
+            plan = self.deps.policy.plan(
+                analysis, requested_model=model,
+                user_agent=user_agent, max_tokens=max_tokens,
+            )
+        return await self._attempt_loop(analysis, plan=plan)
+
+    async def _attempt_loop(self, analysis: AnalysisResult,
+                            forced: Optional[ModelEntry] = None,
+                            plan: Optional[RoutePlan] = None):
         exclude: set[str] = set()
         min_ctx = 0
         max_attempts = 1 if forced else self.deps.config.scheduler.max_attempts
 
         for attempt in range(1, max_attempts + 1):
             if time.monotonic() > self.deadline:
-                return _openai_error("total deadline exceeded", 504, "timeout")
+                return self._error("total deadline exceeded", 504, "timeout")
 
             if forced:
                 entry, info = forced, {"tier": forced.tier, "task": analysis.task,
                                        "selected_by": "client"}
             else:
                 try:
-                    entry, info = self.deps.scheduler.select(analysis, exclude, min_ctx)
+                    entry, info = self.deps.scheduler.select(
+                        analysis, exclude, min_ctx,
+                        groups=plan.groups if plan is not None else None,
+                        provider_filter=(self.deps.throttle.peek
+                                         if self.deps.throttle else None),
+                    )
                 except NoCandidateError as e:
-                    return _openai_error(e.reason, e.status_code, "no_candidate")
+                    reason = e.reason
+                    if plan is not None and plan.rejected_by_constraints:
+                        reason += (f" (policy {plan.policy_name!r} constraints "
+                                   f"excluded {plan.rejected_by_constraints} models)")
+                    return self._error(reason, e.status_code, "no_candidate")
+                if plan is not None:
+                    info["policy"] = plan.policy_name
+
+            # 선제 스로틀: dispatch 직전 토큰 소모 — peek과의 race에서 지면 재선택 (§5.13)
+            if self.deps.throttle is not None and not self.deps.throttle.consume(entry.provider):
+                exclude.add(entry.id)
+                continue
 
             provider = self.deps.providers[entry.provider]
             logger.info(
@@ -175,6 +249,8 @@ class ChatPipeline:
                 self.deps.scheduler.record_failure(entry.id, e)
                 self._record(entry, analysis, info, attempt, 0.0, None, 0, 0,
                              success=False, status_code=e.status_code, error_type="4xx")
+                if self.dialect == "anthropic":
+                    return self._error(str(e), e.status_code or 400, "invalid_request_error")
                 body = e.body or {"error": {"message": str(e), "type": "upstream_error",
                                             "code": e.status_code}}
                 return JSONResponse(status_code=e.status_code or 400, content=body)
@@ -182,7 +258,7 @@ class ChatPipeline:
             except asyncio.CancelledError:
                 raise  # 서버 종료 등 — 그대로 전파
 
-        return _openai_error(
+        return self._error(
             f"all models failed after {max_attempts} attempts", 503, "all_failed"
         )
 
@@ -191,24 +267,28 @@ class ChatPipeline:
     async def _try_nonstream(self, entry: ModelEntry, provider: Provider,
                              analysis: AnalysisResult, info: dict, attempt: int):
         start = time.monotonic()
-        upstream = asyncio.ensure_future(
-            provider.chat(entry.provider_model_id, dict(self.body))
-        )
-        watcher = asyncio.ensure_future(_watch_disconnect(self.request))
+        slot_cm = await self._enter_slot(entry.provider)
         try:
-            done, _ = await asyncio.wait({upstream, watcher},
-                                         return_when=asyncio.FIRST_COMPLETED)
-            if watcher in done and upstream not in done:
-                upstream.cancel()
-                self._record(entry, analysis, info, attempt,
-                             (time.monotonic() - start) * 1000, None, 0, 0,
-                             success=False, status_code=None, error_type="cancelled")
-                logger.info("req=%s cancelled by client", self.request_id)
-                return JSONResponse(status_code=499, content={"error": {
-                    "message": "client disconnected", "type": "cancelled", "code": 499}})
-            response = upstream.result()  # 예외는 여기서 typed으로 재발생
+            upstream = asyncio.ensure_future(
+                provider.chat(entry.provider_model_id, dict(self.body))
+            )
+            watcher = asyncio.ensure_future(_watch_disconnect(self.request))
+            try:
+                done, _ = await asyncio.wait({upstream, watcher},
+                                             return_when=asyncio.FIRST_COMPLETED)
+                if watcher in done and upstream not in done:
+                    upstream.cancel()
+                    self._record(entry, analysis, info, attempt,
+                                 (time.monotonic() - start) * 1000, None, 0, 0,
+                                 success=False, status_code=None, error_type="cancelled")
+                    logger.info("req=%s cancelled by client", self.request_id)
+                    return JSONResponse(status_code=499, content={"error": {
+                        "message": "client disconnected", "type": "cancelled", "code": 499}})
+                response = upstream.result()  # 예외는 여기서 typed으로 재발생
+            finally:
+                watcher.cancel()
         finally:
-            watcher.cancel()
+            await _release_slot(slot_cm)
 
         latency_ms = (time.monotonic() - start) * 1000
         usage = response.get("usage") or {}
@@ -219,9 +299,13 @@ class ChatPipeline:
         self._record(entry, analysis, info, attempt, latency_ms, None, pt, ct,
                      success=True, status_code=200, error_type=None)
 
+        if self.dialect == "anthropic":
+            response = anthropic_convert.response_to_anthropic(
+                response, str(self.body.get("model", "")))
         return JSONResponse(
             content=response,
-            headers=_forge_headers(entry, info["tier"], analysis.task, attempt),
+            headers=_forge_headers(entry, info["tier"], analysis.task, attempt,
+                                   info.get("policy")),
         )
 
     # --- 스트리밍: 첫 청크 확보 전까지만 failover 가능 (§5.8) ---
@@ -230,13 +314,19 @@ class ChatPipeline:
                           analysis: AnalysisResult, info: dict, attempt: int):
         start = time.monotonic()
         payload = dict(self.body)
+        slot_cm = await self._enter_slot(entry.provider)
         agen = provider.chat_stream(entry.provider_model_id, payload)
 
-        # 첫 청크 이전 실패(429/5xx/timeout/TTFT)는 typed 예외로 상위 failover 루프에 전달
+        # 첫 청크 이전 실패(429/5xx/timeout/TTFT)는 typed 예외로 상위 failover 루프에 전달.
+        # 슬롯은 스트림 종료(sse finally)까지 유지 — 실패 시 여기서 즉시 해제.
         try:
             first_chunk = await agen.__anext__()
         except StopAsyncIteration:
+            await _release_slot(slot_cm)
             raise UpstreamServerError("empty stream from provider", status_code=502)
+        except BaseException:
+            await _release_slot(slot_cm)
+            raise
 
         ttft_ms = (time.monotonic() - start) * 1000
         self.deps.scheduler.move_pin(analysis.session_key, entry.id)
@@ -246,23 +336,38 @@ class ChatPipeline:
         async def sse() -> Any:
             usage_pt, usage_ct = 0, 0
             completed = False
+            conv = (anthropic_convert.OpenAIToAnthropicStream()
+                    if pipeline.dialect == "anthropic" else None)
             try:
                 async for chunk in _prepend(first_chunk, agen):
                     usage = chunk.get("usage")
                     if usage:
                         usage_pt = usage.get("prompt_tokens", usage_pt)
                         usage_ct = usage.get("completion_tokens", usage_ct)
+                    if conv is not None:
+                        for name, data in conv.feed(chunk):
+                            yield _anthropic_event(name, data)
+                        continue
+                    if usage and not (chunk.get("choices") or pipeline.client_wants_usage):
                         # usage 청크는 강제 주입된 것 — 클라이언트가 원했을 때만 전달 (§5.8)
-                        if not (chunk.get("choices") or pipeline.client_wants_usage):
-                            continue
+                        continue
                     yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n".encode()
-                yield b"data: [DONE]\n\n"
+                if conv is not None:
+                    for name, data in conv.finish():
+                        yield _anthropic_event(name, data)
+                else:
+                    yield b"data: [DONE]\n\n"
                 completed = True
             except ProviderError as e:
                 # mid-stream 에러 — 재시도 불가, SSE error 이벤트로 전달 (§7)
-                err = {"error": {"message": str(e), "type": "upstream_error",
-                                 "code": e.status_code}}
-                yield f"data: {json.dumps(err, ensure_ascii=False)}\n\n".encode()
+                if conv is not None:
+                    yield _anthropic_event("error", {
+                        "type": "error",
+                        "error": {"type": "api_error", "message": str(e)}})
+                else:
+                    err = {"error": {"message": str(e), "type": "upstream_error",
+                                     "code": e.status_code}}
+                    yield f"data: {json.dumps(err, ensure_ascii=False)}\n\n".encode()
             finally:
                 latency_ms = (time.monotonic() - start) * 1000
                 if completed:
@@ -276,12 +381,27 @@ class ChatPipeline:
                                      usage_pt, usage_ct, success=False,
                                      status_code=None, error_type="cancelled")
                 await _aclose_quiet(agen)
+                await _release_slot(slot_cm)
 
         return StreamingResponse(
             sse(),
             media_type="text/event-stream",
-            headers=_forge_headers(entry, info["tier"], analysis.task, attempt),
+            headers=_forge_headers(entry, info["tier"], analysis.task, attempt,
+                                   info.get("policy")),
         )
+
+    # --- 스로틀 슬롯 (§5.13) ---
+
+    async def _enter_slot(self, provider_name: str):
+        """max_concurrent 세마포어 진입. 타임아웃은 failover 가능한 UpstreamTimeout으로."""
+        if self.deps.throttle is None:
+            return None
+        slot_cm = self.deps.throttle.slot(provider_name)
+        try:
+            await slot_cm.__aenter__()
+        except TimeoutError as e:
+            raise UpstreamTimeout("provider concurrency slot timeout") from e
+        return slot_cm
 
     # --- 기록 ---
 
@@ -362,6 +482,59 @@ def build_router(deps: Deps) -> APIRouter:
             return _openai_error(str(e), 502, error_type)
         deps.scheduler.record_success(entry.id, (time.monotonic() - start) * 1000)
         return JSONResponse(content=response)
+
+    @router.post("/v1/route/explain")
+    async def route_explain(request: Request):
+        """드라이런 — 실제 호출 없이 판정·정책 매칭·탈락 사유·스코어표 반환 (§5.8)"""
+        try:
+            body = await request.json()
+        except Exception:
+            raise HTTPException(status_code=400, detail="invalid JSON body")
+
+        model = str(body.get("model", "auto"))
+        task_hint, _ = _extract_task_hint(request, model)
+        analysis = deps.analyzer.analyze(body, task_hint=task_hint)
+        user_agent = request.headers.get("user-agent", "")
+        max_tokens = body.get("max_tokens")
+
+        result: dict[str, Any] = {
+            "analysis": {
+                "task": analysis.task,
+                "confidence": round(analysis.confidence, 2),
+                "est_prompt_tokens": analysis.est_prompt_tokens,
+                "required_features": sorted(analysis.required_features),
+                "session_key": analysis.session_key,
+                "language": analysis.language,
+            },
+        }
+
+        direct = deps.registry.resolve_client_model(model)
+        if direct is not None:
+            passes = (deps.policy is None or deps.policy.entry_passes_constraints(
+                direct, analysis, requested_model=model,
+                user_agent=user_agent, max_tokens=max_tokens))
+            result["direct_model"] = {
+                "model": direct.id,
+                "passes_constraints": passes,
+                "note": "client-specified model bypasses routing; no failover",
+            }
+            return result
+
+        groups = None
+        if deps.policy is not None:
+            plan = deps.policy.plan(analysis, requested_model=model,
+                                    user_agent=user_agent, max_tokens=max_tokens)
+            groups = plan.groups
+            result["policy"] = {
+                "matched": plan.policy_name,
+                "rejected_by_constraints": plan.rejected_by_constraints,
+            }
+
+        result.update(deps.scheduler.explain(
+            analysis, groups=groups,
+            provider_filter=(deps.throttle.peek if deps.throttle else None),
+        ))
+        return result
 
     @router.get("/v1/models")
     @router.get("/models")

@@ -11,19 +11,23 @@
 
 | # | 작업 | DESIGN.md | 담당 | 상태 |
 | --- | --- | --- | --- | --- |
-| 14 | **Policy Engine** — 스키마·평가기·scheduler 연동·constraints | §5.4 | 직접 | 진행중 |
+| 14 | **Policy Engine** — 스키마·평가기·scheduler 연동·constraints | §5.4 | 직접 | 완료 |
 | 15 | 세션 고정 | §5.5-1 | — | M1에서 선행 구현됨 |
-| 16 | **`/v1/messages` Anthropic 호환** — 포맷 변환(tool use·스트리밍 이벤트) | §5.8 | Opus 위임 | 진행중 |
+| 16 | **`/v1/messages` Anthropic 호환** — 포맷 변환(tool use·스트리밍 이벤트) | §5.8 | Opus 위임 | 완료 (Claude Code 실연동은 사용자 환경) |
 | 17 | Analyzer 개선 (힌트 채널·구조 신호·가중) | §5.3 | — | M1에서 선행 구현됨 |
-| 18 | **선제 rate limiting** — provider별 token bucket + 세마포어 | §5.13 | Opus 위임 | 진행중 |
-| 19 | Auto Discovery 배선 | §5.2 | — | 부팅분 M1 완료, reload 연동은 #20 |
-| 20 | `/admin/reload` 핫 리로드(원자적 교체·health 보존) + `/admin/provider` | §5.8 | 직접 | 대기 |
+| 18 | **선제 rate limiting** — provider별 token bucket + 세마포어 | §5.13 | Opus 위임 | 완료 |
+| 19 | Auto Discovery 배선 (부팅 + reload) | §5.2 | — | 완료 |
+| 20 | `/admin/reload` 핫 리로드(원자적 교체·health 보존) | §5.8 | 직접 | 완료 (/admin/provider는 reload로 대체 안내) |
 | 21 | Ollama/OpenRouter/Anthropic 프로바이더 검증 | §5.1 | 사용자 환경 | 구성 지원만 (실검증은 키/로컬 필요) |
 | 22 | 벤치마크 기반 capability 시드 | §5.11-1 | 보류 | 별도 리서치 필요 |
-| 23 | **가격표 배선** — litellm.model_cost 폴백 + 비용 계산 | §5.12 | Sonnet 위임 | 진행중 |
-| 24 | **`/v1/route/explain`** 드라이런 | §5.8 | 직접 (Policy 이후) | 대기 |
-| 25 | **CLI** — `forge start/init/doctor/models` | §8.1 | Sonnet 위임 | 진행중 (pyproject 패키징은 PyPI 등록 시점으로 분리) |
-| 26 | 테스트 하네스 — Provider Simulator | §9 | Sonnet 위임 | 대기 (코어 통합 후) |
+| 23 | **가격표 배선** — litellm.model_cost 폴백 + 비용 계산 | §5.12 | Sonnet 위임 | 완료 |
+| 24 | **`/v1/route/explain`** 드라이런 | §5.8 | 직접 | 완료 |
+| 25 | **CLI** — `forge start/init/doctor/models` | §8.1 | Sonnet 위임 | 완료 (pyproject 패키징은 PyPI 등록 시점으로 분리) |
+| 26 | 테스트 하네스 — Provider Simulator | §9 | 후속 | 보류 — FakeProvider 통합 테스트가 실패 경로를 커버 중, 시뮬레이터는 별도 작업으로 |
+
+> **M2 핵심 완료** (2026-07-09): unittest 141건 + 스모크 24항목 통과. 잔여: #21(사용자 환경),
+> #22(리서치), #26(후속). PRD 정책 예시 중 `provider unavailable → fallback`은 별도 when 조건
+> 없이 Scheduler 가용성 필터가 동일 효과를 냄 — 명시적 조건이 필요해지면 후속 추가.
 
 ### 완료 기준
 

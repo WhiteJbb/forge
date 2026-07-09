@@ -4,6 +4,7 @@
 계약(설정/타입/프로토콜)만 공유한다.
 """
 
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 
@@ -12,14 +13,18 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from .api import admin as admin_api
+from .api import anthropic as anthropic_api
 from .api import observe as observe_api
 from .api import openai as openai_api
 from .api.auth import make_auth_dependency
 from .core.analyzer import RequestAnalyzer
 from .core.health import HealthMonitor
 from .core.metrics import MetricsEngine
+from .core.policy import PolicyEngine
+from .core.pricing import fill_registry_prices
 from .core.registry import Registry
 from .core.scheduler import Scheduler
+from .core.throttle import ProviderThrottle
 from .providers.base import make_provider
 from .settings import ConfigError, load_config
 
@@ -39,11 +44,17 @@ def create_app(config_path: str = "forge.yaml") -> FastAPI:
         raise SystemExit(f"forge: {e}") from e
 
     registry = Registry(config)
+    fill_registry_prices(registry, config)  # litellm 가격표 폴백 (§5.12)
     providers = {p.name: make_provider(p, config.timeouts) for p in config.providers}
     scheduler = Scheduler(config, registry)
     analyzer = RequestAnalyzer()
     metrics = MetricsEngine(config.metrics)
     health = HealthMonitor(registry, providers, config.health)
+    policy = PolicyEngine(config, registry)
+    throttle = ProviderThrottle(config.providers)
+
+    # reload가 교체하는 참조 — lifespan 종료 시 최신 monitor를 멈추기 위한 홀더
+    health_ref = {"monitor": health}
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -57,6 +68,7 @@ def create_app(config_path: str = "forge.yaml") -> FastAPI:
             for name, added in discovered.items():
                 if added:
                     logger.info("discovered %d new models from %s", len(added), name)
+            fill_registry_prices(registry, config)  # 신규 발견 모델의 가격도 채움
         except Exception as e:
             logger.warning("auto discovery failed: %s", e)
         await health.warmup()  # 콜드 스타트: tier1 워밍업 (§5.13)
@@ -65,9 +77,9 @@ def create_app(config_path: str = "forge.yaml") -> FastAPI:
 
         # graceful shutdown: 신규 거부는 uvicorn이, drain 후 flush는 우리가 (§5.13)
         logger.info("Forge shutting down...")
-        await health.stop()
+        await health_ref["monitor"].stop()
         await metrics.stop()  # 큐 flush 포함
-        for provider in providers.values():
+        for provider in deps.providers.values():
             await provider.close()
         logger.info("Forge stopped")
 
@@ -101,11 +113,78 @@ def create_app(config_path: str = "forge.yaml") -> FastAPI:
     deps = openai_api.Deps(
         config=config, registry=registry, scheduler=scheduler,
         analyzer=analyzer, metrics=metrics, providers=providers,
+        policy=policy, throttle=throttle,
     )
 
+    reload_lock = asyncio.Lock()
+
+    async def reload_config_fn() -> dict:
+        """forge.yaml 핫 리로드 — 검증 통과 시에만 원자적 교체 (§5.9).
+
+        health 상태는 이관하고, in-flight 요청은 구 provider로 완주(지연 close).
+        server/auth 항목 변경은 재시작이 필요하다.
+        """
+        async with reload_lock:
+            new_config = load_config(config_path)  # ConfigError는 admin에서 400 처리
+
+            new_registry = Registry(new_config)
+            # discovery로 등록됐던 모델을 재등록해 리로드로 사라지지 않게 유지
+            for old_entry in deps.registry.all():
+                if (new_registry.get(old_entry.id) is None
+                        and old_entry.source == "discovered"
+                        and new_config.provider(old_entry.provider) is not None):
+                    new_registry.merge_discovered(
+                        old_entry.provider, [old_entry.provider_model_id])
+            # 기존 health(쿨다운·레이턴시·윈도) 이관 — 리로드가 낙인/학습을 지우면 안 됨
+            for entry in new_registry.all():
+                old_entry = deps.registry.get(entry.id)
+                if old_entry is not None:
+                    entry.health = old_entry.health
+            fill_registry_prices(new_registry, new_config)
+
+            new_providers = {p.name: make_provider(p, new_config.timeouts)
+                             for p in new_config.providers}
+            new_health = HealthMonitor(new_registry, new_providers, new_config.health)
+
+            await health_ref["monitor"].stop()
+            old_providers = dict(deps.providers)
+
+            # 원자적 교체 — 이후 요청은 전부 새 참조를 본다
+            deps.config = new_config
+            deps.registry = new_registry
+            deps.scheduler = Scheduler(new_config, new_registry)
+            deps.policy = PolicyEngine(new_config, new_registry)
+            deps.throttle = ProviderThrottle(new_config.providers)
+            deps.providers = new_providers
+
+            health_ref["monitor"] = new_health
+            await new_health.start()
+            discovered = await new_health.discover()
+            fill_registry_prices(new_registry, new_config)
+
+            async def _delayed_close():
+                await asyncio.sleep(60)  # in-flight 요청이 구 provider로 완주할 여유
+                for p in old_providers.values():
+                    try:
+                        await p.close()
+                    except Exception:
+                        pass
+
+            asyncio.create_task(_delayed_close())
+            logger.info("config reloaded — %d models, %d providers",
+                        len(new_registry.all()), len(new_providers))
+            return {
+                "status": "reloaded",
+                "models": len(new_registry.all()),
+                "providers": sorted(new_providers),
+                "discovered": {k: len(v) for k, v in discovered.items()},
+                "note": "server/auth section changes require a restart",
+            }
+
     app.include_router(openai_api.build_router(deps), dependencies=[Depends(require_key)])
-    app.include_router(observe_api.build_router(config, registry, metrics))
-    app.include_router(admin_api.build_router(registry))
+    app.include_router(anthropic_api.build_router(deps), dependencies=[Depends(require_key)])
+    app.include_router(observe_api.build_router(deps))
+    app.include_router(admin_api.build_router(deps, reload_config_fn))
 
     @app.get("/")
     async def root():
