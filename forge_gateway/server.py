@@ -261,12 +261,26 @@ def create_app(config_path: str = "forge.yaml") -> FastAPI:
 # 설정 없으면 SystemExit)이 테스트와 도구를 오염시킨다. 진입점은 main()/CLI(forge start).
 
 
-def print_banner(config) -> None:
-    """기동 직후 '그래서 뭘 하면 되는지'를 알려주는 안내 (U2 — CLI start와 main 공용)"""
-    base = f"http://{config.server.host}:{config.server.port}"
-    print(f"""
-  Forge is up.
+# ASCII 아트 배너 — 순수 ASCII만 사용(cp949 콘솔에서 유니코드 박스문자가 인코딩
+# 에러로 부팅을 크래시시킨 적이 있음, §CLAUDE.md "사용자 노출 문자열은 ASCII로").
+# ANSI 컬러도 넣지 않음 — 사용자 터미널에서 컬러 코드가 raw 텍스트로 깨져 보이는
+# 사례를 실제로 확인했다(LiteLLM 배너 스크린샷).
+_BANNER_ART = r"""
+  #####   ###   ####    ####  #####
+  #      #   #  #   #  #      #
+  ###    #   #  ####   #  ##  ####
+  #      #   #  #  #   #   #  #
+  #       ###   #   #   ####  #####
+"""
 
+
+def print_banner(config) -> None:
+    """기동 직후 ASCII 아트 + '그래서 뭘 하면 되는지' 안내 (U2 — CLI start와 main 공용)"""
+    base = f"http://{config.server.host}:{config.server.port}"
+    rule = "-" * 58
+    print(_BANNER_ART)
+    print(rule)
+    print(f"""
   Dashboard      {base}/dashboard/ui
   Health         {base}/health
 
@@ -276,6 +290,7 @@ def print_banner(config) -> None:
 
   Spend guard:   forge guard --no-paid   |   forge guard --max-cost 0.05
 """)
+    print(rule)
 
 
 def main():
