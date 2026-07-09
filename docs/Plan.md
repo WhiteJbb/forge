@@ -4,9 +4,24 @@
 > 마일스톤 전체와 설계 근거는 [DESIGN.md](../DESIGN.md) §10이 단일 소스다. 이 문서는 "지금 하는 작업"의 실행 계획만 담는다.
 > M1 기록: [WorkLog.md](WorkLog.md) 2026-07-09 항목 (13/13 완료, main `6e99236`).
 
-## 현재 마일스톤: M2 — 지능 계층 (진행중)
+## 현재 마일스톤: M2.5 — 정리 스프린트 (진행중)
 
-목표: Policy Engine을 중심으로 한 정책 기반 라우팅 + Anthropic 호환 + 선제 스로틀.
+목표: M3 착수 전 기반 정리 — 벤치마크 시드, 테스트 하네스, 배포 패키징.
+진행 방식: 브랜치 `feat/m2.5-cleanup` → 로컬 squash merge. 이후 사용자 통합 검증 → M3.
+
+| # | 작업 | 근거 | 담당 | 상태 |
+| --- | --- | --- | --- | --- |
+| A | 패키지 rename `src` → `forge_gateway` + pyproject.toml (PyPI 배포 가능 상태) | §8.1 | 직접 | 진행중 |
+| B | capability 벤치마크 시드 — 웹 리서치 → forge.yaml 점수 갱신 (출처 주석) | §5.11-1 | 직접 (웹 검색) | 대기 |
+| C | Provider Simulator — 429/5xx/지연/절단 주입 mock 서버 + 시나리오 테스트 | §9-1 | Opus 위임 | 대기 (A 이후) |
+
+완료 기준: 전체 테스트 통과 + `pip install -e .` 후 `forge doctor` 동작 + 시뮬레이터로
+failover/쿨다운/스로틀 시나리오 결정론 재현. 이후 사용자 통합 검증(실키 + Claude Code) 대기.
+
+---
+
+## 완료: M2 — 지능 계층 (main `8ec11aa`)
+
 진행 방식: 브랜치 `feat/m2-intelligence` → 로컬 squash merge (PR 생략 — 임시, DecisionLog 참조).
 
 | # | 작업 | DESIGN.md | 담당 | 상태 |
