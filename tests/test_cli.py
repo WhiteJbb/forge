@@ -6,6 +6,7 @@ start는 서버 기동을 요구하므로 이 파일에서 다루지 않는다.
 
 import io
 import os
+import sys
 import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
@@ -222,6 +223,51 @@ class ModelsCommandTests(_EnvIsolatedTestCase):
         self.assertEqual(code, 1)
         self.assertIn("config file not found", err.getvalue())
 
+    def test_discovery_note_appears_when_no_models_and_provider_has_discovery(self):
+        self.config_path.write_text(
+            "version: 1\n"
+            "providers:\n"
+            "  - name: nvidia\n"
+            "    free: true\n",
+            encoding="utf-8",
+        )
+        args = self._parse(["models", "--config", str(self.config_path)])
+        out = io.StringIO()
+        with redirect_stdout(out):
+            code = cli.cmd_models(args)
+
+        text = out.getvalue()
+        self.assertEqual(code, 0)
+        self.assertIn("provider 'nvidia'", text)
+        self.assertIn("discovery enabled", text)
+
+    def test_discovery_note_absent_when_models_configured(self):
+        self._write_two_tier_config()
+        args = self._parse(["models", "--config", str(self.config_path)])
+        out = io.StringIO()
+        with redirect_stdout(out):
+            code = cli.cmd_models(args)
+
+        self.assertEqual(code, 0)
+        self.assertNotIn("discovery enabled", out.getvalue())
+
+    def test_discovery_note_absent_when_provider_discovery_disabled(self):
+        self.config_path.write_text(
+            "version: 1\n"
+            "providers:\n"
+            "  - name: anthropic\n"
+            "    litellm_prefix: anthropic\n"
+            "    discovery: false\n",
+            encoding="utf-8",
+        )
+        args = self._parse(["models", "--config", str(self.config_path)])
+        out = io.StringIO()
+        with redirect_stdout(out):
+            code = cli.cmd_models(args)
+
+        self.assertEqual(code, 0)
+        self.assertNotIn("discovery enabled", out.getvalue())
+
 
 class GuardCommandTests(_EnvIsolatedTestCase):
     def setUp(self):
@@ -276,6 +322,16 @@ class GuardCommandTests(_EnvIsolatedTestCase):
         self.assertEqual(code, 0)
         config = load_config(self.config_path)
         self.assertEqual(config.policies[0].constraints.max_cost_per_request, 0.0)
+
+    def test_max_cost_negative_is_rejected(self):
+        args = self._parse(["guard", "--config", str(self.config_path), "--max-cost", "-0.01"])
+        err = io.StringIO()
+        with redirect_stderr(err):
+            code = cli.cmd_guard(args)
+
+        self.assertEqual(code, 1)
+        self.assertIn("must not be negative", err.getvalue())
+        self.assertFalse(self.local_path.exists())
 
     def test_off_removes_guard_and_deletes_empty_file(self):
         args1 = self._parse(["guard", "--config", str(self.config_path), "--no-paid"])
@@ -526,6 +582,33 @@ class PoliciesCommandTests(_EnvIsolatedTestCase):
 
         self.assertEqual(code, 0)
         self.assertIn("no policies configured", out.getvalue().lower())
+
+
+class MainEntryPointTests(unittest.TestCase):
+    """main() reconfigures stdout/stderr to utf-8 to survive legacy Windows consoles."""
+
+    def test_reconfigures_stdout_and_stderr_when_supported(self):
+        fake_out = mock.Mock()
+        fake_err = mock.Mock()
+        with mock.patch.object(sys, "stdout", fake_out), \
+                mock.patch.object(sys, "stderr", fake_err), \
+                mock.patch.object(cli, "_COMMANDS", {"policies": lambda args: 0}):
+            code = cli.main(["policies", "--config", "forge.yaml"])
+
+        self.assertEqual(code, 0)
+        fake_out.reconfigure.assert_called_once_with(encoding="utf-8", errors="replace")
+        fake_err.reconfigure.assert_called_once_with(encoding="utf-8", errors="replace")
+
+    def test_does_not_crash_when_stream_lacks_reconfigure(self):
+        # io.StringIO has no reconfigure() method, exercising the hasattr() guard.
+        fake_out = io.StringIO()
+        fake_err = io.StringIO()
+        with mock.patch.object(sys, "stdout", fake_out), \
+                mock.patch.object(sys, "stderr", fake_err), \
+                mock.patch.object(cli, "_COMMANDS", {"policies": lambda args: 0}):
+            code = cli.main(["policies", "--config", "forge.yaml"])
+
+        self.assertEqual(code, 0)
 
 
 if __name__ == "__main__":

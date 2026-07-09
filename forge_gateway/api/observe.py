@@ -6,7 +6,7 @@ Deps/runtime을 통해 참조를 읽으므로 /admin/reload의 원자적 교체(
 
 from pathlib import Path
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from fastapi.responses import FileResponse, Response
 
 from .openai import Deps
@@ -14,9 +14,15 @@ from .openai import Deps
 _STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 
 
-def build_router(deps: Deps, runtime: dict) -> APIRouter:
-    """runtime: {"prom": PromExporter, ...} — reload가 항목을 교체한다."""
+def build_router(deps: Deps, runtime: dict, require_key=None) -> APIRouter:
+    """runtime: {"prom": PromExporter, ...} — reload가 항목을 교체한다.
+
+    /v1/stats*는 /v1/* 인증 계약(§5.8)을 따른다 — 사용량·비용·최근 요청이
+    노출되므로 키가 설정돼 있으면 Bearer 검증 (리뷰 #6).
+    /health·/metrics·/dashboard는 관측 관례상 공개 유지.
+    """
     router = APIRouter()
+    stats_deps = [Depends(require_key)] if require_key is not None else []
 
     @router.get("/health")
     async def health():
@@ -33,11 +39,11 @@ def build_router(deps: Deps, runtime: dict) -> APIRouter:
             "models": [m.to_dict() for m in models],
         }
 
-    @router.get("/v1/stats")
+    @router.get("/v1/stats", dependencies=stats_deps)
     async def stats(days: int = 7):
         return await deps.metrics.range_summary(days)
 
-    @router.get("/v1/stats/recent")
+    @router.get("/v1/stats/recent", dependencies=stats_deps)
     async def stats_recent(limit: int = 50):
         """최근 요청 피드 — "방금 요청이 왜 그 모델로 갔지?"의 답 (대시보드 소비)"""
         return {"requests": await deps.metrics.recent_requests(limit)}

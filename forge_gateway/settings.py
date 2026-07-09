@@ -94,6 +94,21 @@ class DefaultsConfig(BaseModel):
     tier: str = "tier3"
     features: list[str] = Field(default_factory=lambda: ["tools", "streaming"])
 
+    @field_validator("tier")
+    @classmethod
+    def _valid_default_tier(cls, v: str) -> str:
+        if v not in VALID_TIERS:
+            raise ValueError(f"defaults.tier must be one of {VALID_TIERS}, got {v!r}")
+        return v
+
+    @field_validator("features")
+    @classmethod
+    def _valid_default_features(cls, v: "list[str]") -> "list[str]":
+        unknown = set(v) - set(VALID_FEATURES)
+        if unknown:
+            raise ValueError(f"unknown features {unknown}, valid: {VALID_FEATURES}")
+        return v
+
 
 class SchedulerConfig(BaseModel):
     cooldown_seconds: int = 300

@@ -31,7 +31,7 @@ name = "forge-gateway"
 version = "0.0.1"
 description = "Intelligent AI Gateway for Coding Agents (in development)"
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = ">=3.10"
 license = { text = "MIT" }
 
 [build-system]
@@ -67,3 +67,15 @@ twine upload dist/*
 
 - ~~pyproject.toml 작성~~ → **완료 (M2.5)**: 패키지 `forge_gateway`, 엔트리포인트 `forge`/`forge-gw`, 의존성 이관까지 반영됨. 위의 "최소 패키지 준비" 단계는 건너뛰고 §3 빌드 & 업로드만 실행하면 된다.
 - CI 릴리스 자동화 시 API 토큰 대신 **Trusted Publishing**(GitHub Actions ↔ PyPI 연동, 토큰 불필요)으로 전환 (DESIGN.md §8.2)
+
+## 재배포 절차 (버전을 올릴 때마다)
+
+최초 등록(위 체크리스트)은 끝났으므로, 이후 릴리스는 아래 5단계만 반복한다.
+
+1. `pyproject.toml`의 `version` 필드 bump (예: `0.3.0.dev0` → `0.3.0`, 또는 `0.3.1`) — [semver](https://semver.org/) 기준
+2. [CHANGELOG.md](CHANGELOG.md) 갱신 — `[Unreleased]` 항목을 새 버전 섹션(`## [X.Y.Z] - YYYY-MM-DD`)으로 옮기고 `[Unreleased]`는 비워둔다
+3. `python -m build` — `dist/`에 새 `.whl` + `.tar.gz` 생성 (이전 버전의 dist 파일이 섞이지 않도록 `dist/` 비우고 재빌드 권장)
+4. `twine upload dist/*` — `forge-gateway` 전용 scope 토큰으로 업로드
+5. `git tag vX.Y.Z` (+ `git push --tags`) — 릴리스 커밋에 태그
+
+Trusted Publishing 전환 전까지는 위 5단계를 수동으로 반복한다.

@@ -4,11 +4,13 @@
 
 ## S1. 최초 설치와 연결 (P1)
 
-1. `pipx install forge-gateway` → `forge init` 실행
+1. `git clone` → `python -m venv .venv` → `pip install -e .` → `forge init` 실행[^1]
 2. init이 환경변수에서 `NVIDIA_API_KEY`를 감지하고 forge.yaml 생성 제안
 3. `forge start` → `forge doctor`로 연결 확인
 4. Cline 설정에서 베이스 URL `http://localhost:4000/v1`, 모델 `auto` 지정
 5. **성공 기준**: 여기까지 5분 이내, 문서는 README 하나로 충분
+
+[^1]: PyPI에 `forge-gateway 0.3.0.dev0`가 dev 릴리스로 올라가 있지만(PUBLISHING.md), `pipx install forge-gateway` 한 줄 설치는 **PyPI 정식(비-dev) 릴리스 이후**의 권장 경로다. 현재 기준 흐름은 저장소를 clone해 editable(`-e`) 설치하는 것.
 
 ## S2. 일상 사용 — 모델 무감지 (P1)
 
@@ -26,7 +28,7 @@
 
 ## S4. 정책 작성 — 무료만 쓰기 (P1, P2)
 
-1. forge.yaml에 `constraints: { allow_paid: false }` 추가 → `/admin/reload`
+1. `forge guard --no-paid` 한 줄 실행 — forge.local.yaml에 지출 가드가 기록되고 실행 중인 서버에 자동 reload까지 적용된다. (직접 편집을 원하면 forge.yaml에 `constraints: { allow_paid: false }` 추가 후 `forge reload` / `POST /admin/reload`도 동일하게 동작)
 2. 가격 미확인(unknown) 모델까지 후보에서 제외됨
 3. **성공 기준**: 이후 `daily_summary` 비용이 항상 $0.00
 

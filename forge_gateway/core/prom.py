@@ -53,33 +53,33 @@ class PromExporter:
 
         self._requests_total = Counter(
             "forge_requests_total",
-            "요청 수 (outcome별 — success 또는 error_type)",
+            "Request count (by outcome - success or error_type)",
             ["model", "provider", "task", "outcome"],
             registry=self._cr,
         )
         self._latency_seconds = Histogram(
             "forge_request_latency_seconds",
-            "요청 레이턴시(초)",
+            "Request latency (seconds)",
             ["model"],
             buckets=_LATENCY_BUCKETS,
             registry=self._cr,
         )
         self._ttft_seconds = Histogram(
             "forge_request_ttft_seconds",
-            "스트리밍 첫 토큰까지 시간(초)",
+            "Time to first token for streaming responses (seconds)",
             ["model"],
             buckets=_TTFT_BUCKETS,
             registry=self._cr,
         )
         self._tokens_total = Counter(
             "forge_tokens_total",
-            "토큰 수 (direction=prompt/completion)",
+            "Token count (direction=prompt/completion)",
             ["model", "direction"],
             registry=self._cr,
         )
         self._cost_dollars_total = Counter(
             "forge_cost_dollars_total",
-            "누적 비용(USD)",
+            "Cumulative cost (USD)",
             ["model"],
             registry=self._cr,
         )
@@ -88,19 +88,19 @@ class PromExporter:
 
         self._model_health = Gauge(
             "forge_model_health",
-            "모델 상태 (해당 status면 1, 모델당 라벨 하나만 1)",
+            "Model status (1 for the current status, only one label per model is set to 1)",
             ["model", "status"],
             registry=self._cr,
         )
         self._latency_ewma = Gauge(
             "forge_model_latency_ewma_ms",
-            "모델 레이턴시 EWMA(ms)",
+            "Model latency EWMA (ms)",
             ["model"],
             registry=self._cr,
         )
         self._cooldown_remaining = Gauge(
             "forge_model_cooldown_remaining_seconds",
-            "쿨다운 잔여 시간(초)",
+            "Cooldown remaining time (seconds)",
             ["model"],
             registry=self._cr,
         )
@@ -110,13 +110,13 @@ class PromExporter:
         if self._throttle is not None:
             self._throttle_tokens_remaining = Gauge(
                 "forge_throttle_tokens_remaining",
-                "provider별 token bucket 잔여량",
+                "Remaining token bucket amount per provider",
                 ["provider"],
                 registry=self._cr,
             )
             self._throttle_in_flight = Gauge(
                 "forge_throttle_in_flight",
-                "provider별 현재 in-flight 요청 수",
+                "Current in-flight request count per provider",
                 ["provider"],
                 registry=self._cr,
             )
@@ -128,7 +128,7 @@ class PromExporter:
         try:
             self._on_record(metric)
         except Exception:
-            logger.exception("PromExporter.on_record 실패 (무시)")
+            logger.exception("PromExporter.on_record failed (ignored)")
 
     def _on_record(self, metric: "RequestMetric") -> None:
         model = metric.model or "unknown"

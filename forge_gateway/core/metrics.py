@@ -65,7 +65,7 @@ class MetricsEngine:
         try:
             await asyncio.to_thread(self._repo.close)
         except Exception:
-            logger.exception("metrics repo close 실패 (무시)")
+            logger.exception("metrics repo close failed (ignored)")
 
     # ------------------------------------------------------------- ingest
 
@@ -79,7 +79,7 @@ class MetricsEngine:
             try:
                 self.on_record(metric)
             except Exception:
-                logger.exception("on_record 훅 실패 (무시)")
+                logger.exception("on_record hook failed (ignored)")
         try:
             self._queue.put_nowait(metric)
         except asyncio.QueueFull:
@@ -87,13 +87,13 @@ class MetricsEngine:
             now = time.monotonic()
             if now - self._last_drop_log >= _DROP_LOG_INTERVAL:
                 logger.warning(
-                    "메트릭 큐 가득참 — %d건 드롭됨 (최근 1분 스로틀)", self._dropped
+                    "metrics queue full - %d dropped (throttled, last 1 min)", self._dropped
                 )
                 self._last_drop_log = now
                 self._dropped = 0
         except Exception:
             # 어떤 경우에도 요청 경로를 죽이지 않는다 (§9-4 메트릭 격리)
-            logger.exception("메트릭 record 실패 (무시)")
+            logger.exception("metrics record failed (ignored)")
 
     # ------------------------------------------------------------- summaries
 
@@ -154,7 +154,7 @@ class MetricsEngine:
         try:
             await asyncio.to_thread(self._repo.record_batch, batch)
         except Exception:
-            logger.exception("메트릭 flush 실패 — %d건 유실 (무시)", len(batch))
+            logger.exception("metrics flush failed - %d entries lost (ignored)", len(batch))
 
     def _maybe_prune(self) -> None:
         """날짜가 바뀌면 하루 1회 prune 실행. 예외는 삼킨다."""
@@ -163,12 +163,13 @@ class MetricsEngine:
             return
         self._last_prune_date = today
         retention = self._config.retention_days
-        # prune은 동기 repo 호출이므로 백그라운드 태스크로 위임(루프 논블로킹)
-        asyncio.create_task(self._run_prune(retention))
+        # prune은 동기 repo 호출이므로 백그라운드 태스크로 위임(루프 논블로킹).
+        # 강한 참조 유지 — task는 약참조라 GC로 사라질 수 있다 (리뷰 #8)
+        self._prune_task = asyncio.create_task(self._run_prune(retention))
 
     async def _run_prune(self, retention_days: int) -> None:
         try:
             deleted = await asyncio.to_thread(self._repo.prune, retention_days)
-            logger.info("메트릭 prune 완료 — %d행 삭제", deleted)
+            logger.info("metrics prune complete - %d row(s) deleted", deleted)
         except Exception:
-            logger.exception("메트릭 prune 실패 (무시)")
+            logger.exception("metrics prune failed (ignored)")

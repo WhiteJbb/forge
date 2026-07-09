@@ -124,6 +124,7 @@ class Scheduler:
                 if (
                     pinned is not None
                     and pinned.health.is_available()
+                    and (provider_filter is None or provider_filter(pinned.provider))
                     and analysis.required_features <= pinned.features
                     and self._context_fits(pinned, analysis.est_prompt_tokens,
                                            min_context_window)
@@ -258,10 +259,13 @@ class Scheduler:
         }
 
     def _context_fits(self, entry: ModelEntry, est_tokens: int, min_window: int) -> bool:
-        if min_window and (entry.context_window or 0) <= min_window:
-            return False
         if entry.context_window is None:
-            return True  # 창 크기 미상 — 하드 컷 불가, ContextFit 점수에서만 감점
+            # 창 크기 미상 — 하드 컷 불가, ContextFit 점수에서만 감점.
+            # min_window(상향 failover) 요구도 배제하지 않는다: 기본 설정처럼 전 모델이
+            # 미상일 때 전부 탈락시키면 컨텍스트 초과 1회가 fail-closed가 된다 (리뷰 #2)
+            return True
+        if min_window and entry.context_window <= min_window:
+            return False
         return est_tokens <= entry.context_window * 0.9
 
     # --- 스코어링 (§5.5-2, 부분 점수 전부 0~10) ---

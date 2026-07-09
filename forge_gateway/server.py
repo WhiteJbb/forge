@@ -7,6 +7,7 @@
 import asyncio
 import logging
 from contextlib import asynccontextmanager
+from importlib.metadata import PackageNotFoundError, version as _pkg_version
 
 from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -100,10 +101,15 @@ def create_app(config_path: str = "forge.yaml") -> FastAPI:
             await provider.close()
         logger.info("Forge stopped")
 
+    try:
+        forge_version = _pkg_version("forge-gateway")  # pyproject 단일 소스 (리뷰: 버전 3곳 불일치)
+    except PackageNotFoundError:
+        forge_version = "0.0.0-dev"
+
     app = FastAPI(
         title="Forge",
         description="Intelligent AI Gateway for Coding Agents",
-        version="0.2.0-dev",
+        version=forge_version,
         lifespan=lifespan,
     )
 
@@ -119,11 +125,20 @@ def create_app(config_path: str = "forge.yaml") -> FastAPI:
 
     @app.middleware("http")
     async def body_size_limit(request: Request, call_next):
+        # 알려진 한계: chunked 요청(Content-Length 없음)은 이 검사를 우회한다 —
+        # loopback 기본 바인딩 전제라 수용, 외부 바인딩 시 리버스 프록시에서 제한 권장
         length = request.headers.get("content-length")
-        if length and int(length) > max_body:
-            return JSONResponse(status_code=413, content={"error": {
-                "message": f"request body exceeds {config.server.max_body_mb}MB",
-                "type": "payload_too_large", "code": 413}})
+        if length:
+            try:
+                too_big = int(length) > max_body
+            except ValueError:
+                return JSONResponse(status_code=400, content={"error": {
+                    "message": "invalid Content-Length header",
+                    "type": "invalid_request_error", "code": 400}})
+            if too_big:
+                return JSONResponse(status_code=413, content={"error": {
+                    "message": f"request body exceeds {config.server.max_body_mb}MB",
+                    "type": "payload_too_large", "code": 413}})
         return await call_next(request)
 
     require_key = make_auth_dependency(config.auth)
@@ -134,6 +149,7 @@ def create_app(config_path: str = "forge.yaml") -> FastAPI:
     )
 
     reload_lock = asyncio.Lock()
+    background_tasks: set = set()  # create_task 결과의 강한 참조 (GC 방지, 리뷰 #8)
 
     async def reload_config_fn() -> dict:
         """forge.yaml 핫 리로드 — 검증 통과 시에만 원자적 교체 (§5.9).
@@ -152,11 +168,13 @@ def create_app(config_path: str = "forge.yaml") -> FastAPI:
                         and new_config.provider(old_entry.provider) is not None):
                     new_registry.merge_discovered(
                         old_entry.provider, [old_entry.provider_model_id])
-            # 기존 health(쿨다운·레이턴시·윈도) 이관 — 리로드가 낙인/학습을 지우면 안 됨
+            # 기존 health(쿨다운·레이턴시·윈도) 이관 — 리로드가 낙인/학습을 지우면 안 됨.
+            # ewma_alpha는 설정이 바뀌었을 수 있으므로 새 값으로 갱신 (리뷰 #12)
             for entry in new_registry.all():
                 old_entry = deps.registry.get(entry.id)
                 if old_entry is not None:
                     entry.health = old_entry.health
+                    entry.health._alpha = new_config.scheduler.latency_ewma_alpha
             fill_registry_prices(new_registry, new_config)
 
             new_providers = {p.name: make_provider(p, new_config.timeouts)
@@ -196,7 +214,10 @@ def create_app(config_path: str = "forge.yaml") -> FastAPI:
                     except Exception:
                         pass
 
-            asyncio.create_task(_delayed_close())
+            # 강한 참조 유지 — asyncio task는 약참조라 GC로 사라질 수 있다 (리뷰 #8)
+            task = asyncio.create_task(_delayed_close())
+            background_tasks.add(task)
+            task.add_done_callback(background_tasks.discard)
             logger.info("config reloaded — %d models, %d providers",
                         len(new_registry.all()), len(new_providers))
             return {
@@ -209,8 +230,10 @@ def create_app(config_path: str = "forge.yaml") -> FastAPI:
 
     app.include_router(openai_api.build_router(deps), dependencies=[Depends(require_key)])
     app.include_router(anthropic_api.build_router(deps), dependencies=[Depends(require_key)])
-    app.include_router(observe_api.build_router(deps, runtime))
-    app.include_router(admin_api.build_router(deps, reload_config_fn))
+    app.include_router(observe_api.build_router(deps, runtime, require_key))
+    # /admin/*: loopback 제한(라우터 내부) + API 키 이중 검증 (§5.8 계약, 리뷰 #5)
+    app.include_router(admin_api.build_router(deps, reload_config_fn),
+                       dependencies=[Depends(require_key)])
 
     @app.get("/")
     async def root():

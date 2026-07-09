@@ -13,6 +13,7 @@ Provider 프로토콜(base.py)의 유일한 구현체. litellm Python SDK를 프
 
 import asyncio
 import logging
+import re
 import time
 from typing import Any, AsyncIterator, Optional
 
@@ -107,11 +108,19 @@ def _extract_status(e: Exception) -> Optional[int]:
         return None
 
 
+# provider 키 패턴 — 업스트림 에러 메시지에 키가 에코될 수 있어 마스킹 (§8.3, 리뷰 #14)
+_SECRET_RE = re.compile(r"\b(nvapi-|sk-(?:or-|ant-|proj-)?|gsk_|AIza)[A-Za-z0-9_\-]{8,}")
+
+
+def _mask_secrets(text: str) -> str:
+    return _SECRET_RE.sub(lambda m: m.group(1) + "***", text)
+
+
 def _extract_message(e: Exception) -> str:
     msg = getattr(e, "message", None)
     if not msg:
         msg = str(e)
-    return msg or e.__class__.__name__
+    return _mask_secrets(msg or e.__class__.__name__)
 
 
 def _extract_retry_after(e: Exception) -> Optional[float]:
@@ -145,10 +154,13 @@ def _extract_retry_after(e: Exception) -> Optional[float]:
 
 def _openai_error_body(message: str, status: Optional[int], e: Exception) -> dict[str, Any]:
     """업스트림 에러를 OpenAI 에러 포맷 {"error": {message,type,code}}로 정규화 (§5.1)."""
-    # 업스트림이 이미 OpenAI 포맷 바디를 준 경우 최대한 보존
+    # 업스트림이 이미 OpenAI 포맷 바디를 준 경우 최대한 보존 — 단 message는 키 마스킹 (§8.3)
     body = getattr(e, "body", None)
     if isinstance(body, dict) and isinstance(body.get("error"), dict):
-        return body
+        err = dict(body["error"])
+        if isinstance(err.get("message"), str):
+            err["message"] = _mask_secrets(err["message"])
+        return {**body, "error": err}
     err_type = _ERROR_TYPE_BY_STATUS.get(status or 400, "invalid_request_error")
     code = getattr(e, "code", None)
     return {"error": {"message": message, "type": err_type, "code": code}}
@@ -215,8 +227,13 @@ class LiteLLMProvider:
 
         context_cls = ll("ContextWindowExceededError")
 
-        # 1) context length 초과 — 명시적 클래스 또는 메시지 표식 (상향 failover 대상, §7)
-        if is_inst(context_cls) or _looks_like_context_length(message):
+        # 1) context length 초과 — 명시적 클래스는 즉시. 메시지 표식 기반 승격은
+        #    4xx(또는 status 미상)일 때만: 429/5xx 문구에 우연히 "context" 등이
+        #    섞여 잘못된 상향 failover로 빠지는 오탐 방지 (리뷰 #13)
+        if is_inst(context_cls):
+            return ContextLengthExceeded(message, status_code=status or 400)
+        if _looks_like_context_length(message) and status != 429 and (
+                status is None or status < 500):
             return ContextLengthExceeded(message, status_code=status or 400)
 
         # 2) 429
@@ -324,7 +341,7 @@ class LiteLLMProvider:
         실패는 삼키고 빈 목록 + 경고 로그 — discovery 실패가 부팅을 막지 않게.
         """
         if not self.config.api_base:
-            logger.warning("provider %s: api_base 없음 — list_models 건너뜀", self.name)
+            logger.warning("provider %s: no api_base — skipping list_models", self.name)
             return []
         url = f"{self.config.api_base.rstrip('/')}/models"
         headers = {}
@@ -335,12 +352,12 @@ class LiteLLMProvider:
             resp.raise_for_status()
             data = resp.json()
         except Exception as e:  # noqa: BLE001
-            logger.warning("provider %s: list_models 실패 (%s)", self.name, e)
+            logger.warning("provider %s: list_models failed (%s)", self.name, e)
             return []
 
         items = data.get("data") if isinstance(data, dict) else None
         if not isinstance(items, list):
-            logger.warning("provider %s: 예상 밖 /models 응답 포맷", self.name)
+            logger.warning("provider %s: unexpected /models response format", self.name)
             return []
         ids: list[str] = []
         for item in items:

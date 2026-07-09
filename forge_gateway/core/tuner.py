@@ -71,7 +71,7 @@ class CapabilityTuner:
             except asyncio.CancelledError:
                 raise
             except Exception:
-                logger.exception("tuner run failed (무시)")
+                logger.exception("tuner run failed (ignored)")
             await asyncio.sleep(self._config.interval_minutes * 60)
 
     async def run_once(self) -> dict:
@@ -109,7 +109,7 @@ class CapabilityTuner:
                 adjusted.append({"model": model, "capability": cap_key,
                                  "delta": delta, "failure_rate": round(failures / total, 3),
                                  "samples": total})
-                logger.info("tuner: %s %s 보정 %+.0f (실패율 %.0f%%, 표본 %d)",
+                logger.info("tuner: %s %s adjustment %+.0f (failure rate %.0f%%, samples %d)",
                             model, cap_key, delta, failures / total * 100, total)
 
         # tools feature 자동 강등 (§5.11-3): 미검증 discovery 모델의 안전장치
@@ -124,8 +124,8 @@ class CapabilityTuner:
                 entry.demoted_features.append("tools")
                 demoted.append(model)
                 logger.warning(
-                    "tuner: %s 'tools' feature 강등 — tool 포함 요청 실패율 %.0f%% "
-                    "(%d/%d). 하드 필터에서 즉시 제외됨", model,
+                    "tuner: %s 'tools' feature demoted - tool-included request failure rate %.0f%% "
+                    "(%d/%d). immediately excluded from the hard filter", model,
                     t_fail / t_total * 100, t_fail, t_total)
 
         return {"adjusted": adjusted, "demoted": demoted, "rows": len(rows)}

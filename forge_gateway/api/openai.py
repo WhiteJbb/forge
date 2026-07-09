@@ -117,6 +117,10 @@ def _openai_error(message: str, status_code: int, err_type: str = "forge_error")
     )
 
 
+class SlotTimeout(Exception):
+    """스로틀 동시성 슬롯 포화 — 모델 실패가 아니라 게이트웨이측 혼잡 신호 (리뷰 #4)"""
+
+
 async def _watch_disconnect(request: Request) -> None:
     """클라이언트 연결이 끊길 때까지 대기 — failover 루프와 race시킨다 (§5.13)"""
     while not await request.is_disconnected():
@@ -226,8 +230,11 @@ class ChatPipeline:
                 if plan is not None:
                     info["policy"] = plan.policy_name
 
-            # 선제 스로틀: dispatch 직전 토큰 소모 — peek과의 race에서 지면 재선택 (§5.13)
-            if self.deps.throttle is not None and not self.deps.throttle.consume(entry.provider):
+            # 선제 스로틀: dispatch 직전 토큰 소모 — peek과의 race에서 지면 재선택 (§5.13).
+            # 직접 지정 모델은 라우팅과 함께 rpm 게이트도 우회한다 (§5.4, 리뷰 #10) —
+            # 사용자가 명시한 모델을 스로틀 사유로 "all models failed"라 답하면 오해를 만든다.
+            if (not forced and self.deps.throttle is not None
+                    and not self.deps.throttle.consume(entry.provider)):
                 exclude.add(entry.id)
                 continue
 
@@ -243,22 +250,40 @@ class ChatPipeline:
                     return await self._try_stream(entry, provider, analysis, info, attempt)
                 return await self._try_nonstream(entry, provider, analysis, info, attempt)
 
+            except SlotTimeout:
+                # 스로틀 슬롯 포화 — 모델 잘못이 아니므로 health에 귀책하지 않고 (리뷰 #4),
+                # 업스트림에 도달하지 못했으니 rpm 토큰도 반환한다
+                if self.deps.throttle is not None and not forced:
+                    self.deps.throttle.refund(entry.provider)
+                self._record(entry, analysis, info, attempt, 0.0, None, 0, 0,
+                             success=False, status_code=None, error_type="throttled")
+                if forced:
+                    return self._error(
+                        f"provider {entry.provider!r} is at max concurrency for "
+                        f"requested model — retry shortly", 503, "throttled")
+                exclude.add(entry.id)
+                continue
+
             except (RateLimited, UpstreamServerError, UpstreamTimeout,
                     UpstreamConnectionError, ContextLengthExceeded) as e:
+                prev_window = entry.context_window  # 보정 전 창 (리뷰 #2 — 순서 중요)
                 error_type = self.deps.scheduler.record_failure(entry.id, e)
                 self._record(entry, analysis, info, attempt, 0.0, None, 0, 0,
                              success=False, status_code=e.status_code, error_type=error_type)
                 exclude.add(entry.id)
-                if isinstance(e, ContextLengthExceeded):
-                    # 상향 failover: 실패 모델의 (보정 전) 창보다 큰 후보 요구 (§7)
-                    min_ctx = max(min_ctx, entry.context_window or analysis.est_prompt_tokens)
+                if isinstance(e, ContextLengthExceeded) and prev_window:
+                    # 상향 failover: 실패 모델의 보정 전 창보다 큰 후보 요구 (§7).
+                    # 창 미상 모델의 실패는 min_ctx를 올리지 않는다 — 전 모델 미상인
+                    # 기본 설정에서 est 기반 요구는 후보 전멸(fail-closed)을 만든다 (리뷰 #2)
+                    min_ctx = max(min_ctx, prev_window)
                 logger.warning("req=%s model=%s failed (%s), trying next",
                                self.request_id, entry.id, error_type)
                 continue
 
             except UpstreamBadRequest as e:
-                # 요청 자체 문제 — failover 없이 업스트림 에러 반환 (§7)
-                self.deps.scheduler.record_failure(entry.id, e)
+                # 요청 자체 문제 — failover 없이 업스트림 에러 반환 (§7).
+                # health에 귀책하지 않는다: 클라이언트의 잘못된 요청 반복이 멀쩡한 모델을
+                # 쿨다운시키면 안 된다 (리뷰 #3)
                 self._record(entry, analysis, info, attempt, 0.0, None, 0, 0,
                              success=False, status_code=e.status_code, error_type="4xx")
                 if self.dialect == "anthropic":
@@ -348,6 +373,7 @@ class ChatPipeline:
         async def sse() -> Any:
             usage_pt, usage_ct = 0, 0
             completed = False
+            mid_error: Optional[Exception] = None
             conv = (anthropic_convert.OpenAIToAnthropicStream(
                         str(pipeline.body.get("model", "")))
                     if pipeline.dialect == "anthropic" else None)
@@ -378,6 +404,7 @@ class ChatPipeline:
                 completed = True
             except ProviderError as e:
                 # mid-stream 에러 — 재시도 불가, SSE error 이벤트로 전달 (§7)
+                mid_error = e
                 if conv is not None:
                     yield _anthropic_event("error", {
                         "type": "error",
@@ -393,6 +420,15 @@ class ChatPipeline:
                     pipeline._record(entry, analysis, info, attempt, latency_ms, ttft_ms,
                                      usage_pt, usage_ct, success=True,
                                      status_code=200, error_type=None)
+                elif mid_error is not None:
+                    # mid-stream 실패는 진짜 모델 실패다 — health/학습 루프에 반영하지 않으면
+                    # 세션이 고장 난 모델에 계속 고정되고 자가 치유가 끊긴다 (리뷰 #1 HIGH).
+                    # 'cancelled'는 클라이언트 disconnect 전용 (§7)
+                    error_type = pipeline.deps.scheduler.record_failure(entry.id, mid_error)
+                    pipeline._record(entry, analysis, info, attempt, latency_ms, ttft_ms,
+                                     usage_pt, usage_ct, success=False,
+                                     status_code=getattr(mid_error, "status_code", None),
+                                     error_type=error_type)
                 else:
                     # 취소(disconnect)는 모델 실패로 집계하지 않는다 (§7)
                     pipeline._record(entry, analysis, info, attempt, latency_ms, ttft_ms,
@@ -411,14 +447,14 @@ class ChatPipeline:
     # --- 스로틀 슬롯 (§5.13) ---
 
     async def _enter_slot(self, provider_name: str):
-        """max_concurrent 세마포어 진입. 타임아웃은 failover 가능한 UpstreamTimeout으로."""
+        """max_concurrent 세마포어 진입. 포화는 모델 실패와 구분되는 SlotTimeout으로 (리뷰 #4)."""
         if self.deps.throttle is None:
             return None
         slot_cm = self.deps.throttle.slot(provider_name)
         try:
             await slot_cm.__aenter__()
         except TimeoutError as e:
-            raise UpstreamTimeout("provider concurrency slot timeout") from e
+            raise SlotTimeout(provider_name) from e
         return slot_cm
 
     # --- 기록 ---

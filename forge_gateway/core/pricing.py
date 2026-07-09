@@ -28,7 +28,7 @@ def resolve_price(provider_model_id: str, litellm_prefix: str) -> "tuple[float, 
         import litellm
     except ImportError:
         if not _warned_no_litellm:
-            logger.warning("litellm import 실패 — 가격표 조회(3순위)를 건너뜁니다")
+            logger.warning("litellm import failed - skipping price lookup (priority 3)")
             _warned_no_litellm = True
         return None
 

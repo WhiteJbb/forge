@@ -1,4 +1,4 @@
-# Forge 설정 — 단일 소스 (스키마: src/settings.py, 설계: DESIGN.md §5.9)
+# Forge 설정 — 단일 소스 (스키마: forge_gateway/settings.py, 설계: DESIGN.md §5.9)
 version: 1
 
 server:
@@ -8,6 +8,11 @@ server:
 auth:
   api_key_env: FORGE_API_KEY
 
+# auto_providers: true(기본값, 아래 명시 안 해도 적용) — 여기 없는 provider라도
+# 카탈로그(settings.py의 PROVIDER_CATALOG: openrouter/groq/mistral/deepseek/openai/
+# anthropic/ollama)에 있고 대응하는 API 키가 .env/환경변수에 있으면 부팅 시 자동
+# 등록되어 모델까지 discovery된다. 아래처럼 forge.yaml에 명시한 provider가 항상 우선.
+# 자동 등록을 끄려면: auto_providers: false
 providers:
   - name: nvidia
     litellm_prefix: openai

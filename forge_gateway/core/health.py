@@ -130,7 +130,7 @@ class HealthMonitor:
                 # probe 중 429는 쿨다운/unhealthy로 반영하지 않는다 — probe가 실트래픽
                 # 기회를 뺏으면 안 된다(§5.6-4). 로그만 남기고 상태는 그대로 둔다.
                 entry.health.last_check = time.time()  # 같은 주기 내 재probe 방지
-                logger.info(f"probe {entry.id}: rate limited (429), 상태 변경 없음")
+                logger.info(f"probe {entry.id}: rate limited (429), no status change")
                 return
             if "timeout" in err or "timed out" in err:
                 # probe 타임아웃은 "느림"이지 "죽음"이 아니다 — 무료 티어 reasoning
@@ -139,7 +139,7 @@ class HealthMonitor:
                 # 확정적 오류(4xx/5xx/연결 실패)와 passive 신호에 맡긴다.
                 entry.health.last_check = time.time()  # 같은 주기 내 재probe 방지
                 logger.info(f"probe {entry.id}: slow (>{self._config.probe_timeout}s), "
-                            f"상태 변경 없음")
+                            f"no status change")
                 return
 
         entry.health.set_probe_result(result.ok, result.latency_ms)
@@ -165,7 +165,7 @@ class HealthMonitor:
 
             streak = self._provider_fail_streak.get(name, 0) + 1
             self._provider_fail_streak[name] = streak
-            logger.warning(f"provider {name}: list_models 빈 목록/실패 ({streak}회 연속)")
+            logger.warning(f"provider {name}: list_models empty/failed ({streak} consecutive)")
 
             if streak >= PROVIDER_FAIL_THRESHOLD:
                 # 소속 모델 전체 unhealthy. 복구는 개별 probe/실트래픽에 맡기고

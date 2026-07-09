@@ -17,6 +17,19 @@
 
 - 전체 185건 테스트 통과, 스모크 31항목 통과 (reload 후 exporter 생존 포함)
 
+### 종합 검토 라운드 (3렌즈 병렬 리뷰 → 일괄 수정)
+
+코드 정밀(Opus 14건) / 신규 사용자 워크스루(Sonnet 11건) / 문서-코드 일치성(Sonnet 10건) 리뷰 후 수정:
+
+- **[HIGH] mid-stream 실패 오분류**: `cancelled`로 기록돼 health·학습 루프가 못 보고 세션이 고장 난 모델에 계속 고정되던 문제 → record_failure 반영으로 자가 치유 복원
+- **컨텍스트 초과 상향 failover의 fail-closed**: 창 미상(기본 설정) 모델 전멸 → 미상은 배제하지 않도록 수정, min_ctx는 보정 전 창 기준
+- **비모델 실패의 health 오귀책 2종**: 4xx(클라이언트 잘못)와 스로틀 슬롯 포화가 멀쩡한 모델을 쿨다운시키던 문제 → 귀책 제거, 슬롯 포화는 rpm 토큰 환불 + `throttled` 기록
+- **인증 계약 구멍**: `/admin/*`·`/v1/stats*`에 API 키 검증 누락(§5.8 위반) → 이중 검증 적용
+- 세션 핀의 스로틀 필터 우회, 직접 지정 모델의 rpm 게이트 오적용, provider 예외 분류 순서(429/5xx 문구 오탐), 업스트림 에러 키 에코 마스킹, reload 백그라운드 태스크 GC 유실, ewma_alpha 리로드 미반영, Content-Length 조작 500, `defaults.tier` 무검증, 버전 문자열 3곳 불일치(pyproject 단일화)
+- **i18n**: 사용자 노출 로그 ~26건 영어화(cp949 콘솔 깨짐 해결), CLI stdout UTF-8 재구성, Prometheus HELP 영어화, guard 음수 검증, `forge models` discovery 안내줄
+- **문서 동기화**: README(로드맵 자기모순·엔드포인트·CLI 7종), DESIGN(§4/§5.8/§10 현행화), IA 전면 갱신, UserScenarios S1/S4, CHANGELOG.md 신설, PUBLISHING 재배포 절차, run_forge.bat 삭제(레거시)
+- 검증: 전체 216건 + 스모크 통과. 알려진 한계로 문서화: chunked 요청의 바디 제한 우회, reload 직후 스로틀 상태 리셋(과도기 2×max_concurrent)
+
 ### UX 스프린트 (사용자 워크스루 피드백, U1~U5)
 
 - `forge reload`/`forge guard --no-paid|--max-cost|--off`/`forge policies` CLI (Sonnet — 실서버 라이브 검증, cp949 콘솔 크래시 예방까지)

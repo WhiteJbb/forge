@@ -91,6 +91,13 @@ class ProviderThrottle:
             return True
         return bucket.consume()
 
+    def refund(self, provider_name: str) -> None:
+        """업스트림에 도달하지 못한 요청(슬롯 타임아웃 등)의 토큰 반환 (리뷰 #4)"""
+        bucket = self._buckets.get(provider_name)
+        if bucket is not None:
+            bucket._refill()
+            bucket.tokens = min(bucket.capacity, bucket.tokens + 1.0)
+
     @asynccontextmanager
     async def slot(self, provider_name: str):
         """provider 호출을 감싸는 동시성 슬롯.
