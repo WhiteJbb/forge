@@ -11,12 +11,12 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from src.api.openai import Deps, build_router
-from src.core.analyzer import RequestAnalyzer
-from src.core.registry import Registry
-from src.core.scheduler import Scheduler
-from src.providers.base import RateLimited, UpstreamBadRequest, UpstreamServerError
-from src.settings import load_config
+from forge_gateway.api.openai import Deps, build_router
+from forge_gateway.core.analyzer import RequestAnalyzer
+from forge_gateway.core.registry import Registry
+from forge_gateway.core.scheduler import Scheduler
+from forge_gateway.providers.base import RateLimited, UpstreamBadRequest, UpstreamServerError
+from forge_gateway.settings import load_config
 
 CONFIG_YAML = """
 version: 1

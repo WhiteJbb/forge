@@ -6,7 +6,7 @@ DESIGN.md §5.8 Anthropic Messages API 변환 규약 검증. unittest 사용.
 import json
 import unittest
 
-from src.api.anthropic_convert import (
+from forge_gateway.api.anthropic_convert import (
     OpenAIToAnthropicStream,
     request_to_openai,
     response_to_anthropic,

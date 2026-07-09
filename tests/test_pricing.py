@@ -6,9 +6,9 @@ from unittest import mock
 
 import litellm
 
-from src.core.pricing import fill_registry_prices, resolve_price
-from src.core.registry import Registry
-from src.settings import ForgeConfig, ModelOverride, ProviderConfig
+from forge_gateway.core.pricing import fill_registry_prices, resolve_price
+from forge_gateway.core.registry import Registry
+from forge_gateway.settings import ForgeConfig, ModelOverride, ProviderConfig
 
 
 def _config(**overrides) -> ForgeConfig:

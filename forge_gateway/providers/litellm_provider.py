@@ -109,26 +109,32 @@ def _extract_message(e: Exception) -> str:
 
 
 def _extract_retry_after(e: Exception) -> Optional[float]:
-    """RateLimitError 응답 헤더에서 Retry-After 초 값을 추출 (없거나 날짜형이면 None)."""
-    headers = None
+    """RateLimitError 응답 헤더에서 Retry-After 초 값을 추출 (없거나 날짜형이면 None).
+
+    후보 위치가 여럿이고 앞 후보가 '존재하지만 빈' 헤더 객체일 수 있으므로,
+    값을 실제로 찾을 때까지 전 후보를 폴스루한다. litellm 1.91.x는 응답 헤더를
+    e.litellm_response_headers에 담는다 (시뮬레이터가 발견).
+    """
     resp = getattr(e, "response", None)
-    if resp is not None:
-        headers = getattr(resp, "headers", None)
-    if headers is None:
-        headers = getattr(e, "headers", None)
-    if not headers:
-        return None
-    value = None
-    getter = getattr(headers, "get", None)
-    if callable(getter):
+    candidates = (
+        getattr(resp, "headers", None) if resp is not None else None,
+        getattr(e, "headers", None),
+        getattr(e, "litellm_response_headers", None),
+    )
+    for headers in candidates:
+        if not headers:
+            continue
+        getter = getattr(headers, "get", None)
+        if not callable(getter):
+            continue
         value = getter("retry-after") or getter("Retry-After")
-    if value is None:
-        return None
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        # HTTP-date 형식 등은 파싱하지 않고 무시
-        return None
+        if value is None:
+            continue
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            continue  # HTTP-date 형식 등 — 다음 후보 시도
+    return None
 
 
 def _openai_error_body(message: str, status: Optional[int], e: Exception) -> dict[str, Any]:

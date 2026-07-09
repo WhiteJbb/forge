@@ -33,9 +33,30 @@
 
 - NVIDIA 무료 티어(integrate.api.nvidia.com): **40 RPM** (사용자 실측 확인) → forge.yaml `rpm: 40` 기본값 근거
 
+## 2026-07-09 — capability 벤치마크 시드 (DESIGN.md §5.11-1)
+
+forge.yaml의 수기 점수를 공개 벤치마크 기반으로 교체. 주 신호: **SWE-bench Verified/Pro**(에이전트 코딩 — Forge 트래픽과 가장 유사), **LiveCodeBench**(오염 저항). Aider Polyglot 공개 리더보드는 당사 모델 대부분이 미등재라 보조 신호로만.
+
+| 모델 (NVIDIA 서빙) | 확인된 수치 | code 시드 | 조치 |
+| --- | --- | --- | --- |
+| GLM-5.2 | SWE-Pro **62.1%** (오픈 1위, GPT-5.5 능가), 1M ctx | 10 | context 9→10 |
+| DeepSeek V4 Pro | LiveCodeBench **93.5** (전 모델 선두급) | 10 | 유지 |
+| Qwen3.5-397B-A17B | SWE-V **76.2%** / SWE-Pro **50.9%** | 9 | debug 9→8 (Pro 격차) |
+| Mistral Medium 3.5 | SWE-V **77.6%** (Devstral 2·Qwen3.5 능가), 256K | 9 | code 7→9 상향 |
+| DeepSeek V4 Flash | SWE-V **~76–78.4%** | 9 | code 8→9 |
+| **MiniMax M3** | SWE-Pro **59.0%** (GPT-5.5·Gemini 3.1 Pro 능가 주장) | 9 | **tier3→tier2 승격**, code 6→9 — 기존 배치가 큰 저평가 |
+| Nemotron 3 Ultra | BenchLM 종합 오픈 상위권 (Opus 4.8 뒤) | 9 | code 8→9 |
+| Nemotron 3 Super 120B | LCB 81.2 / SWE-V 60.47% / SWE-Multi 45.78% | 7 | 유지 |
+| gpt-oss-120b | LCB **88.0** vs SWE-Multi **30.8%** — 대비 극단 | 8 | debug/refactor 하향 (에이전트 작업 약함) |
+| Mistral Large 3 / Small 4 / Llama-3.3-Nemotron-49B | 2026-07 자료 미확인 | — | 기존 추정 유지 + 주석 표기 |
+
+**한계**: 벤치별 측정 조건이 달라 절대 비교 불가 — 시드는 상대 순위 근거로만 사용. NVIDIA 서빙판의 실효 컨텍스트/양자화는 미확인이라 context_window 하드 값은 미설정 (초과 시 상향 failover가 자가 보정). M3의 텔레메트리 보정 루프가 이 시드의 오차를 흡수하는 구조.
+
+**출처**: [llm-stats Aider Polyglot](https://llm-stats.com/benchmarks/aider-polyglot), [morphllm SWE-bench Pro 리더보드](https://www.morphllm.com/swe-bench-pro), [BenchLM coding](https://benchlm.ai/blog/posts/best-llm-coding), [Nemotron 3 Super 실측](https://mpp-insights.com/blog/testing-nemotron-3-super-bi-platform), [Mistral Medium 3.5 가이드](https://www.aimadetools.com/blog/mistral-medium-3-5-complete-guide/), [2026-05 벤치 라운드업](https://codersera.com/blog/ai-agent-benchmarks-state-of-leaderboard-may-2026/)
+
 ## 조사 예정
 
 - [ ] litellm SDK의 `stream_options` / usage 청크 동작 방식 (M1-6 착수 전)
 - [ ] Anthropic Messages ↔ OpenAI 포맷 변환 시 tool use 블록 매핑 (M2-16 착수 전)
-- [ ] 공개 코딩 벤치마크 소스 확정 — Aider polyglot leaderboard, LiveCodeBench 최신 상태 (M2-22 착수 전)
+- [x] 공개 코딩 벤치마크 소스 확정 → 2026-07-09 시드 완료 (위 섹션)
 - [ ] OpenRouter/Ollama 무료 한도 실측 (M2-18 착수 전)

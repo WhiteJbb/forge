@@ -4,6 +4,26 @@
 
 ---
 
+## 2026-07-09 — M2.5 정리 스프린트 (feat/m2.5-cleanup)
+
+### 한 일
+
+1. **패키징(직접)**: `src` → `forge_gateway` rename(PyPI `forge` 패키지와 import 충돌 회피), pyproject.toml(엔트리포인트 `forge`/`forge-gw`), README 퀵스타트를 `pip install -e .` + CLI 흐름으로
+2. **벤치마크 시드(직접, 웹 리서치)**: SWE-bench V/Pro·LiveCodeBench 기준으로 forge.yaml 점수 교체, 근거·출처는 Research.md. **MiniMax M3 tier3→tier2 승격**(SWE-Pro 59.0%), gpt-oss-120b 에이전트 작업 하향 등
+3. **Provider Simulator(Opus 위임)**: localhost mock OpenAI 서버 + 실 litellm 스택 E2E 시나리오 12종 — FakeProvider가 가리던 **실스택 버그 2건 발견**:
+   - Retry-After 미반영: litellm 1.91.x는 헤더를 `e.litellm_response_headers`에 담음 → 폴스루 조회로 수정 (빈 헤더 객체가 체인을 끊던 문제 포함)
+   - usage 청크 누출: litellm이 usage 전용 청크에 빈 delta의 choices를 합성 → `_chunk_has_payload` 판별로 수정
+4. 플레이키 수정: test_throttle 슬롯 테스트의 고정 sleep → 세마포어 동기화 (전체 스위트 부하에서 간헐 실패하던 원인)
+
+### 검증
+
+- 전체 153건 테스트 3회 연속 통과. editable install 후 `forge models` 동작
+
+### 남은 것
+
+- [ ] **사용자 통합 검증**: `forge doctor` → `forge start` → Cline(모델 auto) + Claude Code(`ANTHROPIC_BASE_URL=http://127.0.0.1:4000`) 실사용, Ollama/OpenRouter 키 있으면 함께
+- [ ] 검증 통과 후 M3 착수 / PyPI 등록(PUBLISHING.md — pyproject 준비 완료)
+
 ## 2026-07-09 — M2 구현 (feat/m2-intelligence)
 
 ### 한 일

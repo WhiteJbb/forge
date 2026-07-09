@@ -3,7 +3,7 @@
 import unittest
 from unittest.mock import patch
 
-from src.core.registry import ModelHealth
+from forge_gateway.core.registry import ModelHealth
 
 
 class EwmaLatencyTests(unittest.TestCase):
@@ -103,11 +103,11 @@ class CooldownTests(unittest.TestCase):
 
     def test_cooldown_expiry_reverts_to_unknown(self):
         health = ModelHealth()
-        with patch("src.core.registry.time.time", return_value=1_000_000.0):
+        with patch("forge_gateway.core.registry.time.time", return_value=1_000_000.0):
             health.enter_cooldown(10.0)  # cooldown_until = 1_000_010.0
         self.assertEqual(health.status, "cooldown")
 
-        with patch("src.core.registry.time.time", return_value=1_000_011.0):
+        with patch("forge_gateway.core.registry.time.time", return_value=1_000_011.0):
             self.assertTrue(health.is_available())  # is_available()이 만료를 감지
         self.assertEqual(health.status, "unknown")
         self.assertEqual(health.cooldown_until, 0.0)

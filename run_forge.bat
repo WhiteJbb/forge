@@ -40,7 +40,7 @@ echo   Starting on http://localhost:4000
 echo ============================================
 echo.
 
-%PYTHON_CMD% -m src.server
+%PYTHON_CMD% -m forge_gateway.cli start
 
 set "EXIT_CODE=%ERRORLEVEL%"
 echo Forge exited with code %EXIT_CODE%.

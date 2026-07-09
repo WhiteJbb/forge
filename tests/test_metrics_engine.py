@@ -8,9 +8,9 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from src.core.metrics import MetricsEngine
-from src.settings import MetricsConfig
-from src.storage.sqlite_repo import SqliteRepo
+from forge_gateway.core.metrics import MetricsEngine
+from forge_gateway.settings import MetricsConfig
+from forge_gateway.storage.sqlite_repo import SqliteRepo
 
 
 class RaisingRepo:
@@ -45,12 +45,12 @@ class MetricsEngineRecordAndDrainTests(unittest.IsolatedAsyncioTestCase):
         self.addCleanup(self._tmpdir.cleanup)
         self.db_path = str(Path(self._tmpdir.name) / "forge_test.db")
         # 플러시 주기를 줄여 테스트를 빠르게 한다 (src 수정 없이 모듈 상수만 패치)
-        self._patcher = patch("src.core.metrics._FLUSH_INTERVAL", 0.05)
+        self._patcher = patch("forge_gateway.core.metrics._FLUSH_INTERVAL", 0.05)
         self._patcher.start()
         self.addCleanup(self._patcher.stop)
 
     def _make_metric(self, request_id):
-        from src.storage.base import RequestMetric
+        from forge_gateway.storage.base import RequestMetric
 
         return RequestMetric(
             request_id=request_id,

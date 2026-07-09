@@ -123,6 +123,18 @@ async def _watch_disconnect(request: Request) -> None:
         await asyncio.sleep(0.5)
 
 
+def _chunk_has_payload(chunk: dict) -> bool:
+    """스트리밍 청크가 실제 내용(델타/종료 신호)을 담고 있는지 — usage 전용 청크 판별용"""
+    for choice in chunk.get("choices") or []:
+        if choice.get("finish_reason"):
+            return True
+        delta = choice.get("delta") or {}
+        if any(delta.get(k) for k in
+               ("content", "tool_calls", "function_call", "role", "refusal")):
+            return True
+    return False
+
+
 class ChatPipeline:
     """chat completion 한 건의 선택→호출→failover→기록 수명주기.
 
@@ -348,9 +360,14 @@ class ChatPipeline:
                         for name, data in conv.feed(chunk):
                             yield _anthropic_event(name, data)
                         continue
-                    if usage and not (chunk.get("choices") or pipeline.client_wants_usage):
-                        # usage 청크는 강제 주입된 것 — 클라이언트가 원했을 때만 전달 (§5.8)
-                        continue
+                    if usage and not pipeline.client_wants_usage:
+                        # usage는 강제 주입된 것 — 클라이언트가 원했을 때만 전달 (§5.8).
+                        # litellm은 usage 전용 청크에도 빈 delta의 choices를 합성하므로
+                        # (시뮬레이터가 발견) choices 유무가 아니라 실제 payload로 판별한다.
+                        if not _chunk_has_payload(chunk):
+                            continue
+                        chunk = dict(chunk)
+                        chunk.pop("usage", None)
                     yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n".encode()
                 if conv is not None:
                     for name, data in conv.finish():

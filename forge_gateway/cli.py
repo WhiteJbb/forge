@@ -1,6 +1,6 @@
 """Forge CLI — start/init/doctor/models (DESIGN.md §8.1)
 
-`python -m src.cli <command>`으로 실행한다 (패키징/entry point는 범위 밖).
+`python -m forge_gateway.cli <command>`으로 실행한다 (패키징/entry point는 범위 밖).
 """
 
 import argparse

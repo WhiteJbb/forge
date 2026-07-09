@@ -7,8 +7,8 @@
 import asyncio
 import unittest
 
-from src.core.throttle import ProviderThrottle
-from src.settings import ProviderConfig
+from forge_gateway.core.throttle import ProviderThrottle
+from forge_gateway.settings import ProviderConfig
 
 
 class FakeClock:
@@ -115,10 +115,12 @@ class SlotTest(unittest.IsolatedAsyncioTestCase):
         thr = ProviderThrottle([ProviderConfig(name="nvidia", max_concurrent=2)])
         release = asyncio.Event()
         entered: list = []
+        holders_in = asyncio.Semaphore(0)  # 고정 sleep 대신 결정적 동기화 (전체 스위트 부하에서 플레이키였음)
 
         async def hold():
             async with thr.slot("nvidia"):
                 entered.append("hold")
+                holders_in.release()
                 await release.wait()
 
         async def third():
@@ -127,18 +129,19 @@ class SlotTest(unittest.IsolatedAsyncioTestCase):
 
         t1 = asyncio.create_task(hold())
         t2 = asyncio.create_task(hold())
-        await asyncio.sleep(0.02)
+        await asyncio.wait_for(holders_in.acquire(), 5)
+        await asyncio.wait_for(holders_in.acquire(), 5)
         self.assertEqual(entered.count("hold"), 2)  # 두 슬롯 점유
         self.assertEqual(thr.snapshot()["nvidia"]["in_flight"], 2)
 
         t3 = asyncio.create_task(third())
-        await asyncio.sleep(0.02)
+        await asyncio.sleep(0.05)  # '진입 안 함'의 부정 검증만 sleep에 의존 (안전한 방향)
         self.assertNotIn("third", entered)  # 세 번째는 대기 중
 
-        release.set()  # 한 슬롯 해제 → 세 번째 진입
-        await asyncio.sleep(0.02)
+        release.set()  # 슬롯 해제 → 세 번째 진입
+        await asyncio.wait_for(t3, 5)
         self.assertIn("third", entered)
-        await asyncio.gather(t1, t2, t3)
+        await asyncio.wait_for(asyncio.gather(t1, t2), 5)
         self.assertEqual(thr.snapshot()["nvidia"]["in_flight"], 0)
 
     async def test_slot_timeout_raises(self):

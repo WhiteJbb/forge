@@ -7,11 +7,11 @@ import time
 import unittest
 from unittest.mock import patch
 
-from src.core.registry import Registry
-from src.core.scheduler import NoCandidateError, Scheduler
-from src.core.types import AnalysisResult
-from src.providers.base import ContextLengthExceeded, RateLimited, UpstreamServerError
-from src.settings import ForgeConfig, ModelOverride, ProviderConfig
+from forge_gateway.core.registry import Registry
+from forge_gateway.core.scheduler import NoCandidateError, Scheduler
+from forge_gateway.core.types import AnalysisResult
+from forge_gateway.providers.base import ContextLengthExceeded, RateLimited, UpstreamServerError
+from forge_gateway.settings import ForgeConfig, ModelOverride, ProviderConfig
 
 
 def _make_scheduler(models, **sched_overrides):
@@ -141,12 +141,12 @@ class SessionAffinityTests(unittest.TestCase):
             session_ttl_minutes=30,
         )
         analysis = _analysis(session_key="session-3")
-        with patch("src.core.scheduler.time.time", return_value=1_000_000.0):
+        with patch("forge_gateway.core.scheduler.time.time", return_value=1_000_000.0):
             entry, info = scheduler.select(analysis)
             self.assertEqual(info["selected_by"], "score")
 
         # TTL(30분=1800초) 만료 후 -> 세션 고정 없이 다시 스코어링으로 선택
-        with patch("src.core.scheduler.time.time", return_value=1_000_000.0 + 1801.0):
+        with patch("forge_gateway.core.scheduler.time.time", return_value=1_000_000.0 + 1801.0):
             entry, info = scheduler.select(analysis)
             self.assertEqual(info["selected_by"], "score")
 

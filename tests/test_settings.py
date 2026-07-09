@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from src.settings import ConfigError, load_config
+from forge_gateway.settings import ConfigError, load_config
 
 VALID_YAML = """
 version: 1

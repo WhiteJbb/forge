@@ -62,8 +62,7 @@ twine upload dist/*
 2. **연습이 필요하면 TestPyPI 먼저.** https://test.pypi.org (별도 계정)는 실 등록과 무관한 샌드박스다. `twine upload --repository testpypi dist/*`
 3. 패키지명은 대소문자·`-`/`_` 구분 없이 정규화된다 (`forge-gateway` == `forge_gateway` == `Forge-Gateway`).
 
-## 이후 (M2 패키징 단계에서)
+## 이후
 
-- CLI 엔트리포인트 추가: `[project.scripts] forge = "src.cli:main"` — 단, `forge` 명령은 Foundry(Ethereum)의 `forge`와 PATH 충돌 가능 → `forge-gw` alias 병행 (DESIGN.md §8.1)
+- ~~pyproject.toml 작성~~ → **완료 (M2.5)**: 패키지 `forge_gateway`, 엔트리포인트 `forge`/`forge-gw`, 의존성 이관까지 반영됨. 위의 "최소 패키지 준비" 단계는 건너뛰고 §3 빌드 & 업로드만 실행하면 된다.
 - CI 릴리스 자동화 시 API 토큰 대신 **Trusted Publishing**(GitHub Actions ↔ PyPI 연동, 토큰 불필요)으로 전환 (DESIGN.md §8.2)
-- `requirements.txt` 의존성을 `pyproject.toml`의 `dependencies`로 이관

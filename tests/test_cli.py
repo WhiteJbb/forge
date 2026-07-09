@@ -1,6 +1,6 @@
 """forge CLI 테스트 — init/doctor/models의 순수 로직 (네트워크 없이) (DESIGN.md §8.1)
 
-doctor의 네트워크 단계(list_models)는 src.cli._list_provider_models를 모킹해 검증한다.
+doctor의 네트워크 단계(list_models)는 forge_gateway.cli._list_provider_models를 모킹해 검증한다.
 start는 서버 기동을 요구하므로 이 파일에서 다루지 않는다.
 """
 
@@ -12,8 +12,8 @@ from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest import mock
 
-from src import cli
-from src.settings import load_config
+from forge_gateway import cli
+from forge_gateway.settings import load_config
 
 _PROVIDER_ENV_KEYS = ("NVIDIA_API_KEY", "OPENROUTER_API_KEY", "ANTHROPIC_API_KEY", "FORGE_API_KEY")
 

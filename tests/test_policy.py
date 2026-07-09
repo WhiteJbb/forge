@@ -2,11 +2,11 @@
 
 import unittest
 
-from src.core.policy import PolicyEngine
-from src.core.registry import Registry
-from src.core.scheduler import NoCandidateError, Scheduler
-from src.core.types import AnalysisResult
-from src.settings import ForgeConfig
+from forge_gateway.core.policy import PolicyEngine
+from forge_gateway.core.registry import Registry
+from forge_gateway.core.scheduler import NoCandidateError, Scheduler
+from forge_gateway.core.types import AnalysisResult
+from forge_gateway.settings import ForgeConfig
 
 
 def _config(policies: list) -> ForgeConfig:

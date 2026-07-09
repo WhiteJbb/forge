@@ -209,7 +209,7 @@ def main():
 
     config = app.state.forge_config
     uvicorn.run(
-        "src.server:app",
+        "forge_gateway.server:app",
         host=config.server.host,
         port=config.server.port,
         log_level="debug" if config.server.debug else "info",

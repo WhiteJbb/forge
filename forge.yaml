@@ -18,44 +18,48 @@ providers:
     rpm: 40                  # 실측 한도 (2026-07 확인)
     max_concurrent: 8
 
-# capability/tier 오버라이드 — discovery 결과에 병합. 미지정 값은 defaults 적용
+# capability/tier 오버라이드 — discovery 결과에 병합. 미지정 값은 defaults 적용.
+# capability 시드: 2026-07-09 공개 벤치마크 기반 (근거·출처: docs/Research.md "벤치마크 시드").
+# 주 신호: SWE-bench Verified/Pro(에이전트 코딩), LiveCodeBench(오염 저항). 자료 없는
+# 모델은 기존 추정 유지로 표기. context_window는 NVIDIA 서빙 한도 미확인이라 미설정
+# (초과 시 상향 failover가 자가 보정, §7).
 models:
-  - id: "nvidia:z-ai/glm-5.2"
+  - id: "nvidia:z-ai/glm-5.2"     # SWE-Pro 62.1% 오픈 1위, 1M ctx
     tier: tier1
-    capabilities: { code: 10, debug: 10, refactor: 10, docs: 8, context: 9, speed: 9 }
-  - id: "nvidia:deepseek-ai/deepseek-v4-pro"
+    capabilities: { code: 10, debug: 10, refactor: 10, docs: 8, context: 10, speed: 8 }
+  - id: "nvidia:deepseek-ai/deepseek-v4-pro"   # LiveCodeBench 93.5 선두급
     tier: tier1
     capabilities: { code: 10, debug: 10, refactor: 9, docs: 8, context: 10, speed: 8 }
-  - id: "nvidia:qwen/qwen3.5-397b-a17b"
+  - id: "nvidia:qwen/qwen3.5-397b-a17b"        # SWE-V 76.2% / SWE-Pro 50.9%
     tier: tier1
-    capabilities: { code: 9, debug: 9, refactor: 10, docs: 10, context: 10, speed: 8 }
-  - id: "nvidia:mistralai/mistral-large-3-675b-instruct-2512"
+    capabilities: { code: 9, debug: 8, refactor: 9, docs: 10, context: 10, speed: 8 }
+  - id: "nvidia:mistralai/mistral-large-3-675b-instruct-2512"  # 2026-07 자료 미확인 — 기존 추정 유지
     tier: tier2
     capabilities: { code: 8, debug: 8, refactor: 8, docs: 9, context: 9, speed: 8 }
-  - id: "nvidia:nvidia/nemotron-3-ultra-550b-a55b"
+  - id: "nvidia:nvidia/nemotron-3-ultra-550b-a55b"  # BenchLM 종합 오픈 상위권
     tier: tier2
-    capabilities: { code: 8, debug: 7, refactor: 8, docs: 8, context: 9, speed: 7 }
-  - id: "nvidia:mistralai/mistral-medium-3.5-128b"
+    capabilities: { code: 9, debug: 8, refactor: 8, docs: 8, context: 9, speed: 7 }
+  - id: "nvidia:mistralai/mistral-medium-3.5-128b"  # SWE-V 77.6% (Devstral 2 능가), 256K ctx
     tier: tier2
-    capabilities: { code: 7, debug: 7, refactor: 7, docs: 8, context: 8, speed: 9 }
-  - id: "nvidia:deepseek-ai/deepseek-v4-flash"
+    capabilities: { code: 9, debug: 8, refactor: 8, docs: 8, context: 9, speed: 9 }
+  - id: "nvidia:deepseek-ai/deepseek-v4-flash"      # SWE-V ~78%
     tier: tier2
-    capabilities: { code: 8, debug: 7, refactor: 7, docs: 7, context: 8, speed: 10 }
-  - id: "nvidia:nvidia/nemotron-3-super-120b-a12b"
+    capabilities: { code: 9, debug: 8, refactor: 8, docs: 7, context: 8, speed: 10 }
+  - id: "nvidia:nvidia/nemotron-3-super-120b-a12b"  # LCB 81.2 / SWE-V 60.5%
     tier: tier2
     capabilities: { code: 7, debug: 7, refactor: 7, docs: 7, context: 7, speed: 9 }
-  - id: "nvidia:gpt-oss-120b"
+  - id: "nvidia:gpt-oss-120b"     # LCB 88.0 강 / SWE-Multilingual 30.8% 약 — 에이전트 작업 하향
     tier: tier2
-    capabilities: { code: 8, debug: 8, refactor: 8, docs: 9, context: 9, speed: 8 }
-  - id: "nvidia:mistralai/mistral-small-4-119b-2603"
+    capabilities: { code: 8, debug: 7, refactor: 7, docs: 8, context: 8, speed: 9 }
+  - id: "nvidia:mistralai/mistral-small-4-119b-2603"  # 자료 미확인 — 기존 추정 유지
     tier: tier3
     capabilities: { code: 6, debug: 6, refactor: 6, docs: 7, context: 6, speed: 10 }
-  - id: "nvidia:nvidia/llama-3.3-nemotron-super-49b-v1.5"
+  - id: "nvidia:nvidia/llama-3.3-nemotron-super-49b-v1.5"  # 자료 미확인 — 기존 추정 유지
     tier: tier3
     capabilities: { code: 6, debug: 6, refactor: 6, docs: 7, context: 7, speed: 9 }
-  - id: "nvidia:minimaxai/minimax-m3"
-    tier: tier3
-    capabilities: { code: 6, debug: 6, refactor: 6, docs: 6, context: 6, speed: 9 }
+  - id: "nvidia:minimaxai/minimax-m3"  # SWE-Pro 59.0% — tier3 저평가였음, tier2 승격
+    tier: tier2
+    capabilities: { code: 9, debug: 9, refactor: 8, docs: 7, context: 8, speed: 8 }
 
 defaults:
   capability: 7

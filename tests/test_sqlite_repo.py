@@ -6,8 +6,8 @@ import unittest
 from datetime import datetime, timezone
 from pathlib import Path
 
-from src.storage.base import RequestMetric
-from src.storage.sqlite_repo import SqliteRepo
+from forge_gateway.storage.base import RequestMetric
+from forge_gateway.storage.sqlite_repo import SqliteRepo
 
 
 class SqliteRepoTests(unittest.TestCase):

@@ -34,14 +34,16 @@ Requires Python 3.10+.
 git clone https://github.com/WhiteJbb/forge.git
 cd forge
 python -m venv .venv
-.venv/Scripts/pip install -r requirements.txt   # Windows
-# .venv/bin/pip install -r requirements.txt     # macOS/Linux
+.venv/Scripts/pip install -e .     # Windows  (macOS/Linux: .venv/bin/pip install -e .)
 
-export NVIDIA_API_KEY=nvapi-...                  # or put it in .env
-python -m src.server
+export NVIDIA_API_KEY=nvapi-...    # or put it in .env
+forge doctor                       # check keys & provider connectivity
+forge start
 ```
 
-Forge listens on `http://127.0.0.1:4000`. Check `http://127.0.0.1:4000/health` to see your model pool.
+Forge listens on `http://127.0.0.1:4000`. Check `http://127.0.0.1:4000/health` to see your model pool, or run `forge models` for an offline view. No config yet? `forge init` generates a `forge.yaml` from the API keys it finds in your environment.
+
+> If the `forge` command collides with Foundry's on your PATH, use the `forge-gw` alias.
 
 Configuration lives in [`forge.yaml`](forge.yaml) — providers, model tiers/capabilities, cooldowns, timeouts. It ships with a working NVIDIA free-tier setup.
 

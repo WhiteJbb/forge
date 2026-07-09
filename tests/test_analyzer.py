@@ -3,7 +3,7 @@
 import hashlib
 import unittest
 
-from src.core.analyzer import RequestAnalyzer
+from forge_gateway.core.analyzer import RequestAnalyzer
 
 
 def _user(text):

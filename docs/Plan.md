@@ -11,12 +11,13 @@
 
 | # | 작업 | 근거 | 담당 | 상태 |
 | --- | --- | --- | --- | --- |
-| A | 패키지 rename `src` → `forge_gateway` + pyproject.toml (PyPI 배포 가능 상태) | §8.1 | 직접 | 진행중 |
-| B | capability 벤치마크 시드 — 웹 리서치 → forge.yaml 점수 갱신 (출처 주석) | §5.11-1 | 직접 (웹 검색) | 대기 |
-| C | Provider Simulator — 429/5xx/지연/절단 주입 mock 서버 + 시나리오 테스트 | §9-1 | Opus 위임 | 대기 (A 이후) |
+| A | 패키지 rename `src` → `forge_gateway` + pyproject.toml (PyPI 배포 가능 상태) | §8.1 | 직접 | 완료 |
+| B | capability 벤치마크 시드 — 웹 리서치 → forge.yaml 점수 갱신 (출처 주석) | §5.11-1 | 직접 (웹 검색) | 완료 (MiniMax M3 tier2 승격 포함) |
+| C | Provider Simulator — 429/5xx/지연/절단 주입 mock 서버 + 시나리오 테스트 | §9-1 | Opus 위임 | 완료 — **실 litellm 스택 버그 2건 발견·수정** (Retry-After 미반영, usage 청크 누출) |
 
-완료 기준: 전체 테스트 통과 + `pip install -e .` 후 `forge doctor` 동작 + 시뮬레이터로
-failover/쿨다운/스로틀 시나리오 결정론 재현. 이후 사용자 통합 검증(실키 + Claude Code) 대기.
+> **M2.5 완료** (2026-07-09): 전체 153건 테스트 3회 연속 통과, editable install + `forge` CLI 동작.
+> **다음: 사용자 통합 검증** — 실키(NVIDIA)로 `forge doctor`/`forge start` + Cline(OpenAI) +
+> Claude Code(`ANTHROPIC_BASE_URL`) 실연동. 검증 후 M3(Dashboard, Prometheus, PostgreSQL) 착수.
 
 ---
 

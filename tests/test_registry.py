@@ -2,8 +2,8 @@
 
 import unittest
 
-from src.core.registry import Registry
-from src.settings import ForgeConfig, ModelOverride, ProviderConfig
+from forge_gateway.core.registry import Registry
+from forge_gateway.settings import ForgeConfig, ModelOverride, ProviderConfig
 
 
 def _config(**overrides) -> ForgeConfig:
