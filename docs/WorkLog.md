@@ -39,7 +39,7 @@
 ### 남은 것
 
 - [ ] M3 착수 (Dashboard UI, Prometheus, PostgreSQL) — 지시 대기
-- [ ] PyPI 등록 (PUBLISHING.md — pyproject 준비 완료, 사용자 실행)
+- [x] PyPI 등록 완료 (2026-07-09) — `forge-gateway 0.3.0.dev0`, 이름 확보
 
 ## 2026-07-09 — M2 구현 (feat/m2-intelligence)
 

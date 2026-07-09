@@ -18,7 +18,7 @@
 
 **이유**: 프로젝트 성격을 그대로 설명하고, 설계서에서 이미 가칭으로 사용 중. 등록 절차는 [PUBLISHING.md](../PUBLISHING.md).
 
-**미결**: 최종 확정 및 PyPI 등록은 사용자 실행 대기.
+**미결**: 최종 확정 및 PyPI 등록은 사용자 실행 대기. → **2026-07-09 등록 완료** (`forge-gateway 0.3.0.dev0`, https://pypi.org/project/forge-gateway/)
 
 ## 2026-07-09 — M1 착수 Approval Gates 승인
 
