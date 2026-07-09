@@ -102,13 +102,23 @@ tuner:                               # capability 학습 루프 (§5.11-3)
 #   - name: free-only
 #     constraints: { allow_paid: false }
 policies:
-  - name: docs-prefer-writers
-    when: { task: [documentation] }
+  # 신호 기반 자동 계층화 (2026-07-09 실측: glm/qwen TTFT 180s+, nemotron 2.8s,
+  # mistral-small 0.4s, v4-flash 8.6s, v4-pro 18s — docs/Research.md 벤치 참조)
+  # 큰 작업은 컨텍스트 누적(3만 토큰↑)이나 debug task로 자동 판별 — 수동 전환 불필요.
+  - name: heavy-work
+    when: { min_prompt_tokens: 30000 }
     route:
-      prefer: [ "nvidia:qwen/qwen3.5-397b-a17b", tier1 ]
-      fallback: [ tier2, tier3 ]
+      prefer: [ "nvidia:deepseek-ai/deepseek-v4-pro" ]   # 대형 중 유일하게 응답성 있음
+      fallback: [ tier1, tier2, tier3 ]
+  - name: hard-tasks
+    when: { task: [debug] }
+    route:
+      prefer: [ "nvidia:deepseek-ai/deepseek-v4-pro" ]
+      fallback: [ tier1, tier2, tier3 ]
   - name: default
     when: {}
     route:
-      prefer: [ tier1 ]
-      fallback: [ tier2, tier3 ]
+      prefer: [ "nvidia:nvidia/nemotron-3-super-120b-a12b",
+                "nvidia:deepseek-ai/deepseek-v4-flash",
+                "nvidia:mistralai/mistral-small-4-119b-2603" ]
+      fallback: [ tier2, tier1, tier3 ]
