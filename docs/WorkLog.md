@@ -23,6 +23,7 @@
 
 - **.env 미인식**: `forge doctor`가 .env의 키를 못 읽음 — M1 재작성 때 .env 로드가 run_forge.bat에만 남고 CLI/서버 경로에서 빠짐 → `load_config`가 설정 파일 옆 .env를 자동 주입하도록 수정 (셸 변수 우선, stdlib 구현, 테스트 4건). main `b9736d7`
 - **probe 캘리브레이션 3건** (`forge start` 실기동 로그): ① probe 10초 타임아웃이 tier1 reasoning 모델(느릴 뿐 정상)을 unhealthy로 오판 → 타임아웃은 상태 변경 없이 로그만 ② discovery 등록 110+개 모델까지 주기 probe 대상 → config 모델로 한정 (§2-5 자해 재발 방지) ③ 워밍업/모니터 첫 사이클 중복 probe → last_check 유휴 판정 + 기동 순서 변경. main `b01dbfa`
+- **`/v1/messages` 스트리밍 크래시** (Claude Code 실연동): `OpenAIToAnthropicStream` 배선 시 `request_model` 인자 누락 — 스트리밍 응답이 200 헤더 후 본문 생성에서 TypeError. 원인: 라우터를 통과하는 anthropic 스트리밍 E2E 테스트 부재 → 수정 + 회귀 테스트 2건 추가. main `e3cc9d0`. **같은 세션에서 확인된 정상 동작**: 실전 failover(qwen 500→deepseek), 세션 고정, tool use 왕복(Write 승인 프롬프트)
 
 ### 남은 것
 
