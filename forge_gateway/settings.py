@@ -275,15 +275,59 @@ PROVIDER_CATALOG: "list[dict]" = [
     # 확인함 (docs/Research.md 2026-07-09 조사). 카드 연결 시 실제로는 유료로 전환될 수
     # 있으니 free 플래그를 NVIDIA와 같은 관례로 사용 — "확인된 기본 경로"이지 "영구 보장"은
     # 아니다.
+    # capability_seed: discovery id별 tier/capabilities 시드 — nvidia의 models: 오버라이드와
+    # 같은 값이지만, 해당 provider가 실제로 auto-register될 때(키가 있을 때)만 적용된다
+    # (forge.yaml에 provider를 미리 선언할 필요 없음). 근거·출처: docs/Research.md
+    # 2026-07-09 "신규 무료 provider 벤치마크 시드". source="config" 취급이라 §5.6
+    # 능동 헬스 probe 대상에도 포함된다(discovery 전용 모델은 제외되는 것과 대비).
     {"name": "cerebras", "key_env": "CEREBRAS_API_KEY",
      "api_base": "https://api.cerebras.ai/v1",
-     "free": True, "rpm": 5},  # 공식: RPM 5 / TPM 30K / TPD 1M (Free Trial 티어)
+     "free": True, "rpm": 5,  # 공식: RPM 5 / TPM 30K / TPD 1M (Free Trial 티어)
+     "capability_seed": {
+         # SWE-bench Verified 73.8% / LiveCodeBench V6 84.9 (z.ai 공식) — Cerebras
+         # Preview 상태라 예고 없이 제거될 수 있음(공식 문서 명시), self-healing failover가
+         # 흡수
+         "zai-glm-4.7": {"tier": "tier1",
+                         "capabilities": {"code": 9, "debug": 9, "refactor": 9,
+                                          "docs": 8, "context": 8, "speed": 8}},
+         # nvidia:gpt-oss-120b과 동일 모델(OpenAI 공식 모델카드 SWE-V 52.6%) — 동일 시드 재사용
+         "gpt-oss-120b": {"tier": "tier2",
+                          "capabilities": {"code": 8, "debug": 7, "refactor": 7,
+                                           "docs": 8, "context": 8, "speed": 9}},
+     }},
     {"name": "sambanova", "key_env": "SAMBANOVA_API_KEY",
      "api_base": "https://api.sambanova.ai/v1",
-     "free": True, "rpm": 20},  # 공식: 결제수단 미연결 시 RPM 20 / RPD 20 / TPD 200K
+     "free": True, "rpm": 20,  # 공식: 결제수단 미연결 시 RPM 20 / RPD 20 / TPD 200K
+     "capability_seed": {
+         # SWE-bench Verified 66.0%(2차 자료, 공식 테크리포트 미대조) — Production
+         "DeepSeek-V3.1": {"tier": "tier2",
+                          "capabilities": {"code": 7, "debug": 6, "refactor": 6,
+                                           "docs": 6, "context": 7, "speed": 7}},
+         "gpt-oss-120b": {"tier": "tier2",
+                          "capabilities": {"code": 8, "debug": 7, "refactor": 7,
+                                           "docs": 8, "context": 8, "speed": 9}},
+         # SWE-V 78%/SWE-Pro 56.2% 주장 있으나 2차 집계만, 공식 대조 안 됨 — 보수적 배치
+         "MiniMax-M2.7": {"tier": "tier2",
+                          "capabilities": {"code": 8, "debug": 7, "refactor": 7,
+                                           "docs": 7, "context": 7, "speed": 7}},
+     }},
     {"name": "gemini", "key_env": "GEMINI_API_KEY",
      "api_base": "https://generativelanguage.googleapis.com/v1beta/openai/",
-     "free": True},  # 공식: RPD 매일 리셋(recurring) — 정확한 RPM/RPD 수치는 비공개
+     "free": True,  # 공식: RPD 매일 리셋(recurring) — 정확한 RPM/RPD 수치는 비공개
+     "capability_seed": {
+         # SWE-bench Verified 78% (Google 공식 블로그, "2.5 시리즈·Gemini 3 Pro 능가") —
+         # Preview 상태
+         "models/gemini-3-flash-preview": {
+             "tier": "tier1",
+             "capabilities": {"code": 9, "debug": 9, "refactor": 9,
+                              "docs": 8, "context": 8, "speed": 9}},
+         # SWE-bench Pro(Public) 55.1%, Terminal-bench 2.1 76.2% (DeepMind 공식
+         # 모델카드) — Stable
+         "models/gemini-3.5-flash": {
+             "tier": "tier2",
+             "capabilities": {"code": 8, "debug": 8, "refactor": 8,
+                              "docs": 8, "context": 8, "speed": 9}},
+     }},
     # Zhipu/Z.ai는 무료·유료 모델이 같은 키/엔드포인트에 혼재 — 프로바이더 전체를
     # free로 표시하면 유료 모델까지 (0,0)으로 오분류되므로 free: false로 두고, 공식
     # 문서로 "무료 모델"이라 확인된 항목만 forge.yaml의 models: 오버라이드로 개별 지정.
@@ -326,6 +370,12 @@ def apply_auto_providers(config: "ForgeConfig") -> "list[str]":
         ))
         for model_id in item.get("default_models", []):
             config.models.append(ModelOverride(id=f"{name}:{model_id}"))
+        for model_id, seed in item.get("capability_seed", {}).items():
+            config.models.append(ModelOverride(
+                id=f"{name}:{model_id}",
+                tier=seed.get("tier"),
+                capabilities=seed.get("capabilities", {}),
+            ))
         added.append(name)
     return added
 

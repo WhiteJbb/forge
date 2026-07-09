@@ -4,6 +4,88 @@
 
 ---
 
+## 2026-07-09 — 신규 무료 provider 벤치마크 시드 + 대시보드 상태 정체 조사 (feat/free-provider-catalog, 계속)
+
+### 배경
+
+사용자가 이전 커밋으로 추가된 4개 무료 provider(Cerebras/SambaNova/Gemini/Zhipu)의
+모델들이 "다 tier3/capability 7 균일이라 정책이 사실상 안 골라준다"는 걸 알게 된 뒤
+두 가지를 요청: (1) nvidia처럼 벤치마크 기반 tier/capability 시드, (2) 대시보드에서
+그 provider들 상태가 안 바뀌는 이유.
+
+### 한 일
+
+1. **Gemini 키 문제 실사례 디버깅** (이 작업 전 단계) — `forge doctor`에는 잡히는데
+   모델 0개 → 로그의 `UnicodeEncodeError('ascii', ... '—' ...)`를 httpx Headers로
+   재현(`httpx.Headers({'Authorization': 'Bearer ...— 텍스트'})`)해서 `.env`의
+   `GEMINI_API_KEY` 값에 키 뒤로 em dash 포함 설명 텍스트가 같이 들어간 게 원인임을
+   확정. 코드 버그 아님 — 사용자가 `.env` 정리 후 해결(Gemini 55개 모델 discovery 확인).
+2. **대시보드 "상태 안 바뀜" 원인 확정** — `health.py`의 `_idle_targets()`가
+   `source == "config"`인 모델만 능동 probe하도록 이미 의도적으로 설계돼 있음(§2-5
+   재발 방지 — discovery된 수백 개를 순회 probe하면 무료 티어 rate limit을 자해).
+   discovery 전용 모델은 실트래픽이 없으면 health가 초기값 `"unknown"`에서 절대
+   안 바뀜 — 정책이 tier3를 거의 안 고르는 것과 같은 근본 원인. `/dashboard` 엔드포인트
+   자체에는 provider 필터링 버그 없음(전부 순회) — 확인 후 표시 로직은 정상으로 결론.
+3. **실제 discovery id 확보** — `forge models`(오프라인, config 12개만)로는 안 보여서
+   `GET /v1/models`을 사용자가 직접 호출해 cerebras 3개/sambanova 6개/gemini 55개(대부분
+   TTS/이미지/비디오/임베딩이라 코딩과 무관, 실제 텍스트 코딩 모델은 10여 개로 축소)/
+   zai 0개(키 미설정) 확인.
+4. **벤치마크 리서치** (서브에이전트, 공식 문서 우선) — Cerebras/SambaNova/Gemini 각
+   상위 2~3개 모델의 SWE-bench Verified/Pro, LiveCodeBench, Terminal-bench 점수 조사.
+   출처와 상세는 [Research.md](Research.md) "신규 무료 provider 벤치마크 시드" 참조.
+5. **`PROVIDER_CATALOG`에 `capability_seed` 필드 신설** (`forge_gateway/settings.py`) —
+   anthropic의 `default_models`(bare id만 추가)를 확장해 tier/capabilities까지 포함,
+   `apply_auto_providers`가 provider 등록 시 `config.models`에 직접 채워 넣음. forge.yaml
+   에 provider를 미리 선언할 필요가 없어(§F3에서 정한 원칙 유지) 6개 모델(cerebras
+   2개, sambanova 3개, gemini 2개 — 실제로는 nvidia:gpt-oss-120b 중복 재사용 포함해
+   서로 다른 시드 5종)에 반영.
+6. 테스트 2건 추가(capability_seed가 config.models에 반영되는지, 키 없으면 시드 자체가
+   안 붙는지) — 전체 222건 통과.
+
+### 오류/수정
+
+- 없음 (Gemini 키 이슈는 사용자 환경 문제로 판명, 코드 수정 대상 아님)
+
+### 설계 결정
+
+- **capability_seed는 반드시 provider가 실제로 auto-register될 때만 적용** — forge.yaml에
+  cerebras/sambanova/gemini를 미리 선언하는 대안도 검토했으나, 그러면 키가 없는 대다수
+  사용자에게도 `forge doctor`가 "키 없음" 경고를 띄우게 되어 README의 "Adding a provider
+  is just an API key" 철학을 깨게 됨 — anthropic의 `default_models` 매커니즘을 그대로
+  확장하는 쪽을 선택.
+- **부수효과로 대시보드 문제도 같이 해소**: capability_seed로 들어간 모델은
+  `source == "config"`가 되어 §5.6 능동 probe 대상에 포함됨 — 별도 코드 수정 없이
+  Registry의 기존 규칙(`_build_from_config`가 만든 엔트리는 항상 source="config")을
+  그대로 활용.
+- Preview 상태 모델(cerebras:zai-glm-4.7, gemini:gemini-3-flash-preview)은 벤치마크가
+  가장 강력하지만 예고 없이 제거될 위험이 있음 — 그래도 시드에 포함하고 self-healing
+  failover(쿨다운→다음 후보)로 흡수하는 쪽을 선택. 리스크는 Research.md/Plan.md에 명시.
+
+### 남은 문제 및 다음 할 일
+
+- [ ] MiniMax-M2.7/DeepSeek-V3.1/V3.2 — 2차 집계 수치만 있어 공식 테크리포트 원문 대조 필요
+- [ ] cerebras:zai-glm-4.7 / gemini:gemini-3-flash-preview가 Preview에서 제거되거나
+      GA로 바뀌면 forge.yaml capability_seed 재확인
+- [ ] zai(Zhipu)는 사용자가 ZAI_API_KEY를 아직 설정 안 해서 0개 discovery — 실제 연동
+      검증은 사용자 환경에서
+
+### 블로그/포트폴리오 소재
+
+- "UnicodeEncodeError 디버깅기 — .env 복붙 실수가 httpx Headers까지 타고 올라간 사례"
+- "capability 시드를 forge.yaml이 아니라 provider 카탈로그에 두면 생기는 부수효과 —
+  능동 헬스체크 대상 편입"
+
+### Learning Recovery
+
+- AI가 주도: 로그 한 줄로 UnicodeEncodeError 원인을 httpx 소스 레벨까지 추적해 재현,
+  health.py의 의도된 설계(§2-5)를 발견해 "버그 아님"으로 결론, capability_seed
+  메커니즘 설계·구현.
+- 다음에 직접 설명해보면 좋을 질문: (1) `merge_discovered`가 이미 config로 들어온
+  forge_id는 건드리지 않는 이유(source="config" 보존), (2) Scheduler 스코어링에서
+  tier_priority(가중치 0.10)가 capability(가중치 0.30)보다 작은데도 tier1/tier2/tier3
+  풀 구분이 실질적으로 더 큰 영향을 주는 이유(정책의 fallback 순서 자체가 tier 그룹
+  단위라 스코어링 전에 후보 풀이 먼저 갈린다).
+
 ## 2026-07-09 — 무료 프로바이더 카탈로그 확장 (feat/free-provider-catalog)
 
 ### 배경

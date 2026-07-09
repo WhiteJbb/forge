@@ -61,11 +61,15 @@
 | F3 | Zhipu(z.ai) 직접 API 프로바이더 추가 — 프로바이더 전체는 유료 혼재라 `free: false`(discovery 모델은 price 미상으로 안전 취급). forge.yaml에는 넣지 않음(README 철학 "Adding a provider is just an API key" 유지) — 특정 무료 모델을 확정 취급하고 싶으면 사용자가 직접 `models:` 오버라이드를 추가하도록 README에 예시만 안내 | Research.md 2026-07-09 (GLM-4.5-Flash는 이미 EOL 확인, 예시에서 GLM-4.7-Flash만 사용) | 완료 |
 | F4 | .env.example / README "자동 인식" 목록 갱신, forge.yaml 주석에 출처+확인일 남기기 | — | 완료 |
 | F5 | 카탈로그 확장 회귀 테스트 (`test_settings.py`, `test_registry.py`) | — | 완료 |
+| F6 | 사용자 실환경 `forge models`/`GET /v1/models`로 실제 discovery id 확인 → Cerebras/SambaNova/Gemini 상위 모델 벤치마크 리서치 → `PROVIDER_CATALOG`에 `capability_seed` 필드 신설(provider 미선언 상태에서도 tier/capabilities 시드 적용, anthropic의 `default_models`와 같은 매커니즘 확장) | Research.md 2026-07-09 "신규 무료 provider 벤치마크 시드" | 완료 |
 
 완료 기준: 신규 프로바이더가 `forge doctor`/`forge models`에 인식되고, `allow_paid: false`
 정책에서 확인된 무료 모델만 통과, 전체 테스트 통과.
 
-> **무료 프로바이더 확장 완료** (2026-07-09): 전체 220건 테스트 통과(신규 4건 포함).
+> **무료 프로바이더 확장 완료** (2026-07-09): 전체 222건 테스트 통과(신규 6건 포함).
+> 부수효과(F6): capability_seed로 채워진 모델은 source="config" 취급되어 능동 헬스
+> probe 대상에 포함됨 — 순수 discovery 모델은 실트래픽 없으면 대시보드 상태가
+> "unknown"에 머무르는 문제(사용자 리포트)가 이 6개 모델에 대해서는 해소됨.
 > 잔여: 사용자가 실키로 Cerebras/SambaNova/Gemini/Zhipu 연동 검증 (사용자 환경).
 
 주의: `free` 플래그는 "결제수단 미연결 시 기본 경로"를 뜻함(기존 NVIDIA 항목과 동일 관례) —

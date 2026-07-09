@@ -51,6 +51,8 @@ Configuration lives in [`forge.yaml`](forge.yaml) — providers, model tiers/cap
 
 Free-tier providers Forge recognizes out of the box: NVIDIA, Cerebras, SambaNova, and Gemini all default to a no-cost path until you attach billing (`allow_paid: false` keeps you there). OpenRouter's `:free`-suffixed models are priced at $0 regardless of provider billing state. Z.ai (GLM) mixes free and paid models on the same key, so it's registered without a blanket free flag — see `.env.example` for how to pin a specific free model (e.g. GLM-4.7-Flash) with a `models:` price override.
 
+A handful of standout free models (e.g. `cerebras:zai-glm-4.7`, `gemini:models/gemini-3-flash-preview`) are also pre-seeded with benchmark-based tier/capability scores as soon as their provider registers — no `forge.yaml` edits needed. See [Research.md](docs/Research.md) for sources.
+
 ## Connect your coding agent
 
 Use model **`auto`** and let Forge choose, or `auto:debug` / `auto:refactor` / `auto:documentation` / `auto:testing` to force a task type. Unless you set `FORGE_API_KEY`, the API key can be any non-empty string.
