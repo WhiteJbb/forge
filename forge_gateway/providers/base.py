@@ -7,10 +7,20 @@ failover 로직(§7)은 여기 정의된 예외 타입에 의존한다:
 - UpstreamBadRequest → failover 없이 에러 반환 (요청 자체 문제)
 """
 
+import re
 from typing import Any, AsyncIterator, Optional, Protocol, runtime_checkable
 
 from ..core.types import ProbeResult
 from ..settings import ProviderConfig, TimeoutsConfig
+
+# provider 키 패턴 — 업스트림 에러 메시지/예외 로그에 키가 에코될 수 있어 마스킹
+# (§8.3, 리뷰 #14). 예외를 그대로 로그에 찍는 곳(health.py의 probe/discover 실패 로그
+# 등)은 반드시 이걸 거쳐야 한다 — 마스킹은 이 한 곳에서만 정의한다.
+_SECRET_RE = re.compile(r"\b(nvapi-|sk-(?:or-|ant-|proj-)?|gsk_|AIza)[A-Za-z0-9_\-]{8,}")
+
+
+def mask_secrets(text: str) -> str:
+    return _SECRET_RE.sub(lambda m: m.group(1) + "***", text)
 
 
 class ProviderError(Exception):

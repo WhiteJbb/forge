@@ -16,7 +16,7 @@ import logging
 import time
 from typing import Optional
 
-from ..providers.base import Provider
+from ..providers.base import Provider, mask_secrets
 from ..settings import HealthConfig
 from .registry import ModelEntry, Registry
 
@@ -121,7 +121,7 @@ class HealthMonitor:
             result = await provider.probe(entry.provider_model_id, timeout=self._config.probe_timeout)
         except Exception as e:
             # probe 자체가 예외를 던지는 구현도 있을 수 있으니 방어적으로 로그만 남긴다
-            logger.warning(f"probe {entry.id}: error {e}")
+            logger.warning(f"probe {entry.id}: error {mask_secrets(str(e))}")
             return
 
         if not result.ok and result.error:
@@ -157,7 +157,7 @@ class HealthMonitor:
                 ok = bool(models)
             except Exception as e:
                 ok = False
-                logger.warning(f"provider {name}: list_models failed: {e}")
+                logger.warning(f"provider {name}: list_models failed: {mask_secrets(str(e))}")
 
             if ok:
                 self._provider_fail_streak[name] = 0
@@ -197,7 +197,7 @@ class HealthMonitor:
             try:
                 model_ids = await provider.list_models()
             except Exception as e:
-                logger.warning(f"discover: provider {name} list_models failed: {e}")
+                logger.warning(f"discover: provider {name} list_models failed: {mask_secrets(str(e))}")
                 continue
             added = self._registry.merge_discovered(name, model_ids)
             if added:

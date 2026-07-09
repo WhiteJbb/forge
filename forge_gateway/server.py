@@ -46,6 +46,14 @@ def create_app(config_path: str = "forge.yaml") -> FastAPI:
         # 설정 오류는 부팅 중단 — 명확한 메시지로 (§5.9)
         raise SystemExit(f"forge: {e}") from e
 
+    # loopback 밖으로 바인딩하면서 인증 미설정이면 누구나 이 게이트웨이로 provider API
+    # 키를 소모할 수 있다 (§8.3) — 차단하지 않고 경고만 남긴다(로컬 개발 편의 유지).
+    if config.server.host not in ("127.0.0.1", "::1", "localhost") and not config.auth.api_key:
+        logger.warning(
+            "server.host=%s는 loopback이 아닌데 FORGE_API_KEY가 설정되지 않았습니다 — "
+            "누구나 이 주소로 접근해 등록된 provider API 키를 소모할 수 있습니다. "
+            ".env에 FORGE_API_KEY를 설정하세요.", config.server.host)
+
     registry = Registry(config)
     fill_registry_prices(registry, config)  # litellm 가격표 폴백 (§5.12)
 

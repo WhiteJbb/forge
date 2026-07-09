@@ -47,6 +47,57 @@
 
 > UX 스프린트 완료 (2026-07-09): 테스트 210건 + 스모크 통과.
 
+### M3 후속: 무료 프로바이더 카탈로그 확장 (진행중)
+
+배경: 사용자 요청 — "무료로 쓸 수 있는 API들 싹 긁어서 넣을 수 있게" (2026-07-09 대화).
+방향 결정: 자동 발굴/다중계정 가입(ToS 위반 소지)이 아니라, 공식 문서로 확인된 무료
+프로바이더만 큐레이션해서 카탈로그에 추가 — 리서치 근거는 [Research.md](Research.md) 참조.
+진행 방식: 브랜치 `feat/free-provider-catalog` → PR → squash merge.
+
+| # | 작업 | 근거 | 상태 |
+| --- | --- | --- | --- |
+| F1 | PROVIDER_CATALOG에 Cerebras/SambaNova/Gemini 추가 (공식 문서로 recurring 무료 확인) | Research.md 2026-07-09 | 완료 |
+| F2 | `registry.merge_discovered`: discovery로 찾은 모델 id가 `:free` 접미사면 provider의 free 플래그와 무관하게 price=(0,0) (OpenRouter 컨벤션, 하드코딩 목록 대신 규칙화) | Research.md 2026-07-09 | 완료 |
+| F3 | Zhipu(z.ai) 직접 API 프로바이더 추가 — 프로바이더 전체는 유료 혼재라 `free: false`(discovery 모델은 price 미상으로 안전 취급). forge.yaml에는 넣지 않음(README 철학 "Adding a provider is just an API key" 유지) — 특정 무료 모델을 확정 취급하고 싶으면 사용자가 직접 `models:` 오버라이드를 추가하도록 README에 예시만 안내 | Research.md 2026-07-09 (GLM-4.5-Flash는 이미 EOL 확인, 예시에서 GLM-4.7-Flash만 사용) | 완료 |
+| F4 | .env.example / README "자동 인식" 목록 갱신, forge.yaml 주석에 출처+확인일 남기기 | — | 완료 |
+| F5 | 카탈로그 확장 회귀 테스트 (`test_settings.py`, `test_registry.py`) | — | 완료 |
+| F6 | 사용자 실환경 `forge models`/`GET /v1/models`로 실제 discovery id 확인 → Cerebras/SambaNova/Gemini 상위 모델 벤치마크 리서치 → `PROVIDER_CATALOG`에 `capability_seed` 필드 신설(provider 미선언 상태에서도 tier/capabilities 시드 적용, anthropic의 `default_models`와 같은 매커니즘 확장) | Research.md 2026-07-09 "신규 무료 provider 벤치마크 시드" | 완료 |
+| F7 | **정정**: SambaNova `free: true`는 오판정이었음(사용자 반박으로 발견) — 재검증 결과 recurring 무료가 아니라 $5 1회성 트라이얼뿐, 소진 시 402로 완전히 막힘. `free` 플래그 제거(paid 취급, capability_seed는 유지), .env.example/README 정정. 같은 기준으로 Cerebras/Gemini도 재검증 → 둘 다 문제없어 `free: true` 유지 | Research.md 2026-07-09 "정정: SambaNova는 recurring 무료가 아니었음" | 완료 |
+
+완료 기준: 신규 프로바이더가 `forge doctor`/`forge models`에 인식되고, `allow_paid: false`
+정책에서 확인된 무료 모델만 통과, 전체 테스트 통과.
+
+> **무료 프로바이더 확장 완료** (2026-07-09): 전체 222건 테스트 통과(신규 6건 포함).
+> 부수효과(F6): capability_seed로 채워진 모델은 source="config" 취급되어 능동 헬스
+> probe 대상에 포함됨 — 순수 discovery 모델은 실트래픽 없으면 대시보드 상태가
+> "unknown"에 머무르는 문제(사용자 리포트)가 이 6개 모델에 대해서는 해소됨.
+> 잔여: 사용자가 실키로 Cerebras/SambaNova/Gemini/Zhipu 연동 검증 (사용자 환경).
+
+주의: `free` 플래그는 "결제수단 미연결 시 기본 경로"를 뜻함(기존 NVIDIA 항목과 동일 관례) —
+사용자가 나중에 결제수단을 연결하면 실제로는 과금될 수 있다는 점은 README/주석에 명시.
+
+### M3 후속: 공개 배포 전 점검 (완료 — 2026-07-09)
+
+배경: 사용자 질문 "이제 배포해도 될 정도인가?" → PyPI 공개(이미 `forge-gateway` dev
+등록됨)를 기준으로 남은 격차를 점검. `docs/ReviewChecklist.md` 보안/프라이버시
+섹션을 실제로 코드 대조해 검증.
+
+| # | 작업 | 상태 |
+| --- | --- | --- |
+| D1 | PR #1(무료 provider 카탈로그 확장) main 머지 | 완료 |
+| D2 | CHANGELOG.md에 M3 후속 작업(무료 provider, capability_seed, SambaNova 정정) 반영 | 완료 |
+| D3 | 보안/프라이버시 체크리스트 실제 코드 검증(Explore 서브에이전트) — API 키 마스킹, 프롬프트 본문 미저장, `/admin/*` loopback 강제, 안전한 기본값 | 완료 |
+| D4 | D3에서 발견한 2건 수정: (a) `health.py`의 probe/list_models 예외 로그 3곳이 `mask_secrets`를 안 거치고 raw 예외 문자열을 찍던 것 — 마스킹 함수를 `providers/base.py`로 옮겨 공유(`litellm_provider.py`와 중복 정의 제거) 후 3곳 모두 적용. (b) `server.host`가 loopback이 아닌데 `FORGE_API_KEY` 미설정이면 아무 경고도 없던 것 — `create_app()`에 시작 시 경고 추가(차단은 안 함, 기존 유료 provider 경고와 같은 패턴) | 완료 |
+| D5 | 회귀 테스트 신설(`tests/test_server_security.py`, 5건) | 완료 |
+
+완료 기준: 전체 테스트 통과, 보안 체크리스트 4개 항목 모두 코드로 검증(문서 주장이
+아니라), PR 머지.
+
+> **배포 전 점검 완료** (2026-07-09): 전체 228건 테스트 통과(신규 5건 포함). 발견된
+> 마스킹 누락 2곳 + 무경고 1건 수정. 상세 근거는 [WorkLog.md](WorkLog.md) 참조.
+> PostgreSQL/Redis/멀티 API 키 로테이션은 여전히 DESIGN.md §10 기준 "보류"(단일
+> 로컬 사용자 배포에는 불필요) — "공개 오픈소스로 내놓기" 기준 격차는 이번 점검으로 해소.
+
 > **M2.5 완료** (2026-07-09): 전체 153건 테스트 3회 연속 통과, editable install + `forge` CLI 동작.
 > **다음: 사용자 통합 검증** — 실키(NVIDIA)로 `forge doctor`/`forge start` + Cline(OpenAI) +
 > Claude Code(`ANTHROPIC_BASE_URL`) 실연동. 검증 후 M3(Dashboard, Prometheus, PostgreSQL) 착수.

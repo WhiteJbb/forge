@@ -238,6 +238,9 @@ class Registry:
             forge_id = f"{provider}:{pm_id}"
             if forge_id in self._entries:
                 continue
+            # OpenRouter 컨벤션(":free" 접미사)은 프로바이더가 유료/무료 혼재라도
+            # 그 모델 자체가 과금 없음을 뜻한다 — 공식 문서 확인, docs/Research.md 참조.
+            is_free = (pconf and pconf.free) or pm_id.endswith(":free")
             self._entries[forge_id] = ModelEntry(
                 id=forge_id,
                 provider=provider,
@@ -246,7 +249,7 @@ class Registry:
                 capabilities={k: d.capability for k in
                               ("code", "debug", "refactor", "docs", "context", "speed")},
                 features=set(d.features),
-                price_per_mtok=(0.0, 0.0) if (pconf and pconf.free) else None,
+                price_per_mtok=(0.0, 0.0) if is_free else None,
                 source="discovered",
                 health=ModelHealth(self._config.scheduler.latency_ewma_alpha),
             )

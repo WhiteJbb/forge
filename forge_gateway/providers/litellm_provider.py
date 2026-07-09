@@ -13,7 +13,6 @@ Provider 프로토콜(base.py)의 유일한 구현체. litellm Python SDK를 프
 
 import asyncio
 import logging
-import re
 import time
 from typing import Any, AsyncIterator, Optional
 
@@ -30,6 +29,7 @@ from .base import (
     UpstreamConnectionError,
     UpstreamServerError,
     UpstreamTimeout,
+    mask_secrets as _mask_secrets,
 )
 
 logger = logging.getLogger(__name__)
@@ -106,14 +106,6 @@ def _extract_status(e: Exception) -> Optional[int]:
         return int(status) if status is not None else None
     except (TypeError, ValueError):
         return None
-
-
-# provider 키 패턴 — 업스트림 에러 메시지에 키가 에코될 수 있어 마스킹 (§8.3, 리뷰 #14)
-_SECRET_RE = re.compile(r"\b(nvapi-|sk-(?:or-|ant-|proj-)?|gsk_|AIza)[A-Za-z0-9_\-]{8,}")
-
-
-def _mask_secrets(text: str) -> str:
-    return _SECRET_RE.sub(lambda m: m.group(1) + "***", text)
 
 
 def _extract_message(e: Exception) -> str:
@@ -352,7 +344,7 @@ class LiteLLMProvider:
             resp.raise_for_status()
             data = resp.json()
         except Exception as e:  # noqa: BLE001
-            logger.warning("provider %s: list_models failed (%s)", self.name, e)
+            logger.warning("provider %s: list_models failed (%s)", self.name, _mask_secrets(str(e)))
             return []
 
         items = data.get("data") if isinstance(data, dict) else None

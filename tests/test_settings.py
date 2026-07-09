@@ -221,6 +221,46 @@ class AutoProviderTests(unittest.TestCase):
         self.assertTrue(added.auto_registered)
         self.assertEqual(added.api_base, "https://openrouter.ai/api/v1")
 
+    def test_free_tier_providers_registered_when_key_present(self):
+        """Cerebras/Gemini — recurring 무료 확인됨 (Research.md 2026-07-09) -> free: true"""
+        os.environ["CEREBRAS_API_KEY"] = "csk-test"
+        os.environ["GEMINI_API_KEY"] = "gm-test"
+        config = self._load(VALID_YAML)
+        for name in ("cerebras", "gemini"):
+            provider = config.provider(name)
+            self.assertIsNotNone(provider, f"{name} should auto-register")
+            self.assertTrue(provider.free, f"{name} should be marked free")
+
+    def test_zai_registered_without_free_flag(self):
+        """Zhipu는 무료·유료 모델이 혼재 -> 프로바이더 전체를 free로 표시하지 않음"""
+        os.environ["ZAI_API_KEY"] = "zai-test"
+        config = self._load(VALID_YAML)
+        provider = config.provider("zai")
+        self.assertIsNotNone(provider)
+        self.assertFalse(provider.free)
+
+    def test_sambanova_not_marked_free(self):
+        """재검증(2026-07-09) 결과 $5 1회성 트라이얼뿐 — recurring 무료 아님, paid 취급"""
+        os.environ["SAMBANOVA_API_KEY"] = "sn-test"
+        config = self._load(VALID_YAML)
+        provider = config.provider("sambanova")
+        self.assertIsNotNone(provider)
+        self.assertFalse(provider.free)
+
+    def test_capability_seed_applied_as_config_models(self):
+        """벤치마크로 시드된 모델(zai-glm-4.7 등)은 provider 미선언 상태에서도 config.models에
+        tier/capabilities가 채워져 들어가야 한다(Research.md 2026-07-09 신규 provider 벤치마크 시드)"""
+        os.environ["CEREBRAS_API_KEY"] = "csk-test"
+        config = self._load(VALID_YAML)
+        override = next((m for m in config.models if m.id == "cerebras:zai-glm-4.7"), None)
+        self.assertIsNotNone(override)
+        self.assertEqual(override.tier, "tier1")
+        self.assertEqual(override.capabilities["code"], 9)
+
+    def test_no_capability_seed_when_key_absent(self):
+        config = self._load(VALID_YAML)
+        self.assertFalse(any(m.id.startswith("cerebras:") for m in config.models))
+
     def test_explicit_declaration_wins(self):
         os.environ["OPENROUTER_API_KEY"] = "sk-or-test"
         # providers 목록에 이어붙이기 위해 원본의 providers 섹션 뒤에 삽입

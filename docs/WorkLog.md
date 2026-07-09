@@ -4,6 +4,313 @@
 
 ---
 
+## 2026-07-09 — 공개 배포 전 점검 (feat/free-provider-catalog, 마무리)
+
+### 배경
+
+사용자가 "이제 배포해도 될 정도인가?"라고 질문. "배포"의 의미(개인용 계속 사용/PyPI
+공개/프로덕션 멀티유저)를 나눠서 답한 뒤, "PyPI 공개" 기준으로 남은 격차(PR #1 미머지,
+CHANGELOG 미반영, 보안 체크리스트 미점검)를 짚었고 사용자가 진행을 승인("ㄱㄱ").
+
+### 한 일
+
+1. **CHANGELOG.md 갱신** — `[Unreleased]`에 무료 provider 카탈로그 확장(Cerebras/
+   Gemini/SambaNova/Zhipu), `capability_seed` 매커니즘, SambaNova 정정을 Added/Fixed로
+   반영. 이전까지 M3 후속 작업이 전혀 기록 안 돼 있었음(자체 ReviewChecklist "릴리스
+   전 CHANGELOG 갱신" 항목 미이행 상태였음).
+2. **보안/프라이버시 체크리스트 실제 코드 검증** (Explore 서브에이전트, 추측 금지 —
+   파일:라인 근거로만 판정) — `docs/ReviewChecklist.md`의 4항목을 대조:
+   - API 키 마스킹: 대부분 확인됐지만 `health.py`의 probe/list_models/discover 예외
+     로그 3곳이 `mask_secrets()`를 안 거치고 raw 예외 문자열(`f"...{e}"`)을 그대로
+     로그에 찍고 있었음 — CLAUDE.md 자체 규칙("API 키는 로그 어디에도 노출 금지")
+     위반 소지.
+   - 프롬프트/응답 본문 미저장: 확인됨(`RequestMetric`/`request_metrics` 스키마에
+     텍스트 필드 없음, 숫자/코드만).
+   - `/admin/*` loopback 강제: 확인됨(`admin.py`의 `require_loopback` 의존성 +
+     `server.py`의 `require_key` 이중 적용, 문서 주장이 아니라 실제 코드 강제).
+   - 안전한 기본값: `server.host` 기본 127.0.0.1, 타임아웃 전부 유한값은 확인됐지만,
+     **host를 비-loopback으로 바꾸면서 `FORGE_API_KEY`를 안 설정해도 아무 경고가
+     없었음** — README에는 "반드시 설정할 것"이라고만 적혀 있고 코드 강제가 없던 상태.
+3. **발견한 2건 수정**:
+   - `mask_secrets`(구 `_mask_secrets`)를 `litellm_provider.py`에서 `providers/base.py`
+     로 이동해 공유 유틸로 만듦(두 모듈 다 이미 `base.py`를 import하고 있어 계층상
+     자연스러움) — `litellm_provider.py`는 `from .base import mask_secrets as
+     _mask_secrets`로 기존 호출부를 그대로 유지, `health.py`의 3곳(`_probe_one`,
+     `_check_providers`, `discover`)에 `mask_secrets(str(e))` 적용.
+   - `server.py`의 `create_app()`에 시작 시 경고 추가: `server.host`가 loopback이
+     아니고 `config.auth.api_key`가 비어 있으면 경고 로그(차단 아님) — 기존 "유료
+     프로바이더 자동 등록" 경고와 같은 패턴(경고만, 로컬 개발 편의는 유지).
+4. **회귀 테스트 신설** (`tests/test_server_security.py`, 5건) — `mask_secrets` 자체
+   동작(알려진 키 접두사 마스킹, 무관 텍스트는 그대로) + 비-loopback/무인증 조합일 때
+   경고가 뜨는지·loopback이거나 키가 있으면 안 뜨는지(`assertNoLogs`, Python 3.10+).
+5. 전체 테스트 228건 통과(224 + 신규 5건 — 정확히는 이전 223건 + 5건).
+6. `docs/Plan.md`에 "공개 배포 전 점검" 섹션(D1-D5) 추가.
+
+### 오류/수정
+
+- **API 키 마스킹 불일치** (자체 발견, 보안 리뷰) — 증상: `list_models`/probe/discover
+  실패 시 예외 문자열이 마스킹 없이 로그에 그대로 남음. 원인: `_mask_secrets`가
+  `litellm_provider.py`에만 있고 `_extract_message` 경로에만 적용돼, 그 함수를
+  안 거치는 다른 예외 로그 지점(특히 health.py)에는 마스킹 계약이 전파되지 않음.
+  수정: 마스킹 함수를 공유 위치(`providers/base.py`)로 옮기고 누락된 3곳에 적용.
+- **비-loopback 무인증 무경고** (자체 발견) — 증상: `server.host: 0.0.0.0` +
+  `FORGE_API_KEY` 미설정 조합에서도 아무 경고 없이 부팅됨(README에만 "반드시 설정"이라
+  적혀 있고 코드 강제 없음). 원인: 배포 관련 안전장치가 "유료 provider 자동등록" 경고
+  하나만 있었고 인증 관련 안전장치는 만든 적이 없었음. 수정: 동일 패턴의 경고 추가.
+
+### 설계 결정
+
+- 두 수정 다 **차단이 아니라 경고**로 처리 — 로컬 개발 편의(무인증 기본값)를 깨지
+  않으면서, 실수로 외부에 노출했을 때만 눈에 보이는 신호를 준다. 기존 "유료 provider
+  자동등록" 경고와 일관된 철학.
+- `mask_secrets`의 새 위치를 `core/`가 아니라 `providers/base.py`로 정한 이유:
+  `health.py`가 이미 `providers.base`를 import하고 있어(Provider 프로토콜) 새 의존성
+  추가 없이 재사용 가능했고, 이 함수의 존재 이유 자체가 "provider 어댑터가 만든 예외
+  메시지에 provider 키가 에코될 수 있다"는 것이라 provider 계층에 두는 게 개념적으로도
+  맞음.
+
+### 남은 문제 및 다음 할 일
+
+- [ ] PR #1을 main에 squash merge (이 세션 마지막 단계)
+- [ ] README의 "pre-release, Expect breaking changes" 문구를 뗄지는 사용자가 별도로
+      결정할 사항 — 이번 점검 범위에는 포함하지 않음
+- [ ] `HealthMonitor`/`LiteLLMProvider`/`create_app` 자체를 위한 전용 단위 테스트
+      파일이 지금까지 없었다는 것도 이번에 발견 — 이번엔 보안 관련 경로만 좁게
+      커버(`test_server_security.py`), 전체 커버리지 보강은 별도 작업
+
+### 블로그/포트폴리오 소재
+
+- "마스킹 함수 하나 빼먹은 로그 라인 3개 — 보안 체크리스트를 문서로만 두지 않고
+  코드로 대조했을 때 나온 것"
+
+### Learning Recovery
+
+- AI가 주도: 보안 체크리스트 4항목 코드 대조(Explore 서브에이전트), 마스킹 유틸
+  리팩터링 위치 결정, 경고 로직 구현, 회귀 테스트 작성.
+- 다음에 직접 설명해보면 좋을 질문: (1) `assertNoLogs`가 Python 3.10부터 생겼다는 것과
+  그 전엔 이런 "로그가 안 떴는지" 검증을 어떻게 했을지, (2) `mask_secrets`를 왜 `core/`가
+  아니라 `providers/base.py`에 둬야 순환 의존(circular import)을 피하는지.
+
+
+## 2026-07-09 — 정정: SambaNova free 오판정 수정 (feat/free-provider-catalog, 계속)
+
+### 배경
+
+사용자가 "SambaNova는 $5 크레딧 주고 끝인거같던데"라고 반박. 앞서 커밋에서
+SambaNova를 recurring 무료(카드 없이 계속 사용 가능)로 판단해 `free: true`로
+등록했는데, 사용자의 실사용 경험과 충돌.
+
+### 한 일
+
+1. 웹 재검증(서브에이전트) — 결과: 사용자가 맞음. `cloud.sambanova.ai/plans` 공식
+   페이지는 Free 플랜을 "$5 in free API credits, no credit card required, 30일
+   만료"로만 설명하고 recurring 무료 등급 언급이 없음. 가격표에 $0 모델이 없고 전
+   모델 유료. 커뮤니티 사례에서 크레딧 소진 시 `402 CREDITS_EXHAUSTED`로 완전히
+   막힘 확인. SambaNova 직원이 2025-02 공식 커뮤니티에서 "free tier를 별도 유지할
+   계획 없다"고 직접 확인.
+2. **원인 분석**: 이전 조사가 "카드 없이 되는 rate-limit *등급* 문서가 있는가"만
+   확인했고 "그 등급의 크레딧/기간이 소진되면 실제로 어떻게 되는가"는 확인하지
+   않은 방법론적 결함. rate-limit 분류와 과금 여부는 서로 다른 축인데 혼동함.
+3. `forge_gateway/settings.py`의 `PROVIDER_CATALOG`에서 sambanova의 `free: True`
+   제거 → 다른 유료 provider와 동일하게 취급(discovery 모델은 price 미상, `allow_paid:
+   false`에서 자동 제외). `capability_seed`(DeepSeek-V3.1/gpt-oss-120b/MiniMax-M2.7)는
+   모델 품질 순위라 과금 여부와 무관하므로 유지.
+4. `.env.example`/README에서 SambaNova를 "무료" 목록에서 제거하고 실제 상태(1회성
+   트라이얼, paid 취급) 명시.
+5. 테스트 수정 — 기존 `test_free_tier_providers_registered_when_key_present`에서
+   sambanova 제거, `test_sambanova_not_marked_free` 신규 추가. 전체 223건 통과.
+6. **같은 실수 재발 방지** — Cerebras는 자체 문서가 무료 등급을 "Free **Trial**"로
+   명명하고 있어(SambaNova와 같은 함정 가능성), Gemini도 포함해 "소진/기간 후 실제
+   동작"까지 재검증하는 별도 조사를 진행 중(다음 세션 기록에 결과 반영).
+
+### 오류/수정
+
+- **SambaNova `free: true` 오판정** (사용자 발견) — 증상: `allow_paid: false`
+  정책을 켜도 실제로는 과금될 수 있는 provider가 "무료"로 분류돼 통과됨. 원인:
+  "카드 불필요"와 "recurring 무료"를 혼동(위 원인 분석 참조). 수정: free 플래그
+  제거, 문서 정정.
+
+### 설계 결정 / 교훈
+
+- **"카드 불필요"≠"recurring 무료"** — 무료 여부를 판정할 때는 반드시 "크레딧/기간
+  소진 후 동작"까지 확인해야 한다. 앞으로 새 provider를 free로 등록하기 전에 이
+  체크리스트를 표준으로 삼음: (1) rate-limit 등급 문서 존재 여부, (2) 총량/기간
+  상한 존재 여부, (3) 상한 도달 시 완전 차단인지 저속 유지인지, (4) 커뮤니티 실사용
+  사례로 교차검증.
+- 사용자의 반박을 그대로 받아들이지 않고 재검증부터 했다 — 반박이 맞을 수도, 우리
+  판단이 맞을 수도 있어 실증이 먼저(Development Guide "추측 금지, 실증 우선" 원칙).
+
+### 남은 문제 및 다음 할 일
+
+- [x] Cerebras/Gemini "소진 후 동작" 재검증 완료 — 둘 다 문제없음(총량 상한/만료 없음),
+      `free: true` 유지. Research.md 정정 섹션에 근거 추가.
+- [ ] SambaNova capability_seed(DeepSeek-V3.1/gpt-oss-120b/MiniMax-M2.7)는 유지했으나
+      실사용자가 `allow_paid: false` 없이 쓰면 예상치 못한 과금 가능 — 문서 강조 유지
+- [ ] Cerebras 이용약관 원문 직접 대조는 못함(문서 간 명칭 불일치 "Free Trial" vs
+      "Free"만 확인) — 완전한 확정은 아님, 정책 변경 시 재확인 필요
+
+### 블로그/포트폴리오 소재
+
+- "무료 티어 판정에서 진짜 확인해야 하는 질문: '카드가 필요 없다'가 아니라 '크레딧이
+  0이 되면 무슨 일이 생기나'"
+
+### Learning Recovery
+
+- AI가 주도: 재검증 리서치, 원인 분석(rate-limit 등급 vs 과금 여부 혼동), 코드/문서
+  정정.
+- 다음에 직접 설명해보면 좋을 질문: 왜 `capability_seed`는 유지하면서 `free` 플래그만
+  제거하는 게 맞는 선택인지(모델 품질과 과금 여부가 독립적인 축이라는 것).
+
+
+## 2026-07-09 — 신규 무료 provider 벤치마크 시드 + 대시보드 상태 정체 조사 (feat/free-provider-catalog, 계속)
+
+### 배경
+
+사용자가 이전 커밋으로 추가된 4개 무료 provider(Cerebras/SambaNova/Gemini/Zhipu)의
+모델들이 "다 tier3/capability 7 균일이라 정책이 사실상 안 골라준다"는 걸 알게 된 뒤
+두 가지를 요청: (1) nvidia처럼 벤치마크 기반 tier/capability 시드, (2) 대시보드에서
+그 provider들 상태가 안 바뀌는 이유.
+
+### 한 일
+
+1. **Gemini 키 문제 실사례 디버깅** (이 작업 전 단계) — `forge doctor`에는 잡히는데
+   모델 0개 → 로그의 `UnicodeEncodeError('ascii', ... '—' ...)`를 httpx Headers로
+   재현(`httpx.Headers({'Authorization': 'Bearer ...— 텍스트'})`)해서 `.env`의
+   `GEMINI_API_KEY` 값에 키 뒤로 em dash 포함 설명 텍스트가 같이 들어간 게 원인임을
+   확정. 코드 버그 아님 — 사용자가 `.env` 정리 후 해결(Gemini 55개 모델 discovery 확인).
+2. **대시보드 "상태 안 바뀜" 원인 확정** — `health.py`의 `_idle_targets()`가
+   `source == "config"`인 모델만 능동 probe하도록 이미 의도적으로 설계돼 있음(§2-5
+   재발 방지 — discovery된 수백 개를 순회 probe하면 무료 티어 rate limit을 자해).
+   discovery 전용 모델은 실트래픽이 없으면 health가 초기값 `"unknown"`에서 절대
+   안 바뀜 — 정책이 tier3를 거의 안 고르는 것과 같은 근본 원인. `/dashboard` 엔드포인트
+   자체에는 provider 필터링 버그 없음(전부 순회) — 확인 후 표시 로직은 정상으로 결론.
+3. **실제 discovery id 확보** — `forge models`(오프라인, config 12개만)로는 안 보여서
+   `GET /v1/models`을 사용자가 직접 호출해 cerebras 3개/sambanova 6개/gemini 55개(대부분
+   TTS/이미지/비디오/임베딩이라 코딩과 무관, 실제 텍스트 코딩 모델은 10여 개로 축소)/
+   zai 0개(키 미설정) 확인.
+4. **벤치마크 리서치** (서브에이전트, 공식 문서 우선) — Cerebras/SambaNova/Gemini 각
+   상위 2~3개 모델의 SWE-bench Verified/Pro, LiveCodeBench, Terminal-bench 점수 조사.
+   출처와 상세는 [Research.md](Research.md) "신규 무료 provider 벤치마크 시드" 참조.
+5. **`PROVIDER_CATALOG`에 `capability_seed` 필드 신설** (`forge_gateway/settings.py`) —
+   anthropic의 `default_models`(bare id만 추가)를 확장해 tier/capabilities까지 포함,
+   `apply_auto_providers`가 provider 등록 시 `config.models`에 직접 채워 넣음. forge.yaml
+   에 provider를 미리 선언할 필요가 없어(§F3에서 정한 원칙 유지) 6개 모델(cerebras
+   2개, sambanova 3개, gemini 2개 — 실제로는 nvidia:gpt-oss-120b 중복 재사용 포함해
+   서로 다른 시드 5종)에 반영.
+6. 테스트 2건 추가(capability_seed가 config.models에 반영되는지, 키 없으면 시드 자체가
+   안 붙는지) — 전체 222건 통과.
+
+### 오류/수정
+
+- 없음 (Gemini 키 이슈는 사용자 환경 문제로 판명, 코드 수정 대상 아님)
+
+### 설계 결정
+
+- **capability_seed는 반드시 provider가 실제로 auto-register될 때만 적용** — forge.yaml에
+  cerebras/sambanova/gemini를 미리 선언하는 대안도 검토했으나, 그러면 키가 없는 대다수
+  사용자에게도 `forge doctor`가 "키 없음" 경고를 띄우게 되어 README의 "Adding a provider
+  is just an API key" 철학을 깨게 됨 — anthropic의 `default_models` 매커니즘을 그대로
+  확장하는 쪽을 선택.
+- **부수효과로 대시보드 문제도 같이 해소**: capability_seed로 들어간 모델은
+  `source == "config"`가 되어 §5.6 능동 probe 대상에 포함됨 — 별도 코드 수정 없이
+  Registry의 기존 규칙(`_build_from_config`가 만든 엔트리는 항상 source="config")을
+  그대로 활용.
+- Preview 상태 모델(cerebras:zai-glm-4.7, gemini:gemini-3-flash-preview)은 벤치마크가
+  가장 강력하지만 예고 없이 제거될 위험이 있음 — 그래도 시드에 포함하고 self-healing
+  failover(쿨다운→다음 후보)로 흡수하는 쪽을 선택. 리스크는 Research.md/Plan.md에 명시.
+
+### 남은 문제 및 다음 할 일
+
+- [ ] MiniMax-M2.7/DeepSeek-V3.1/V3.2 — 2차 집계 수치만 있어 공식 테크리포트 원문 대조 필요
+- [ ] cerebras:zai-glm-4.7 / gemini:gemini-3-flash-preview가 Preview에서 제거되거나
+      GA로 바뀌면 forge.yaml capability_seed 재확인
+- [ ] zai(Zhipu)는 사용자가 ZAI_API_KEY를 아직 설정 안 해서 0개 discovery — 실제 연동
+      검증은 사용자 환경에서
+
+### 블로그/포트폴리오 소재
+
+- "UnicodeEncodeError 디버깅기 — .env 복붙 실수가 httpx Headers까지 타고 올라간 사례"
+- "capability 시드를 forge.yaml이 아니라 provider 카탈로그에 두면 생기는 부수효과 —
+  능동 헬스체크 대상 편입"
+
+### Learning Recovery
+
+- AI가 주도: 로그 한 줄로 UnicodeEncodeError 원인을 httpx 소스 레벨까지 추적해 재현,
+  health.py의 의도된 설계(§2-5)를 발견해 "버그 아님"으로 결론, capability_seed
+  메커니즘 설계·구현.
+- 다음에 직접 설명해보면 좋을 질문: (1) `merge_discovered`가 이미 config로 들어온
+  forge_id는 건드리지 않는 이유(source="config" 보존), (2) Scheduler 스코어링에서
+  tier_priority(가중치 0.10)가 capability(가중치 0.30)보다 작은데도 tier1/tier2/tier3
+  풀 구분이 실질적으로 더 큰 영향을 주는 이유(정책의 fallback 순서 자체가 tier 그룹
+  단위라 스코어링 전에 후보 풀이 먼저 갈린다).
+
+## 2026-07-09 — 무료 프로바이더 카탈로그 확장 (feat/free-provider-catalog)
+
+### 배경
+
+사용자가 "무료로 쓸 수 있는 API들 싹 긁어서 넣을 수 있게 하는게 좋지 않을까"라고
+제안. 자동 발굴/다중계정 가입(대부분 프로바이더 ToS의 "1인 1계정" 조항 위반 소지, 이미
+Plan.md 로드맵의 "multi-API-key rotation" 항목도 같은 리스크)과 "공식 문서로 확인된
+무료 프로바이더만 큐레이션해서 추가" 두 방향을 제시했고, 사용자가 후자를 선택.
+
+### 한 일
+
+1. **웹 리서치로 사실 검증** — Cerebras/SambaNova/Gemini/Zhipu(z.ai)/OpenRouter 5개를
+   병렬 서브에이전트로 공식 문서 기준 조사. 판단 기준은 "가입 시 1회 지급되는 소진형
+   크레딧"이 아니라 "사용량과 무관하게 반복 리셋되는 rate-limit 티어"인지 — 이 기준이
+   없으면 NVIDIA처럼 실제로는 트라이얼 크레딧인 걸 "무료"로 잘못 표시하는 실수를
+   반복하게 됨. 결과는 [Research.md](Research.md) 2026-07-09 항목에 출처와 함께 기록.
+2. **PROVIDER_CATALOG 확장** (`forge_gateway/settings.py`) — Cerebras/SambaNova/Gemini는
+   `free: true`(recurring 확인됨), Zhipu(`zai`)는 무료·유료 모델이 같은 키에 혼재하므로
+   `free: false`로 등록(모델 단위 오버라이드는 사용자가 필요시 직접 추가하도록 안내).
+3. **`registry.merge_discovered` 개선** — discovery로 찾은 모델 id가 OpenRouter
+   컨벤션인 `:free` 접미사면, provider 전체의 free 플래그와 무관하게 price=(0,0) 처리.
+   이전에는 provider가 free가 아니면 무조건 price 미상 취급이라, OpenRouter의 실제
+   무료 모델이 `allow_paid: false` 정책에서 보수적으로 제외되는 문제가 있었음 — 하드코딩
+   목록이 아니라 규칙으로 처리해 OpenRouter 카탈로그 변경에도 자동으로 맞음.
+4. `.env.example`, README(자동 인식 프로바이더 목록, 무료 티어 설명) 갱신.
+5. 회귀 테스트 4건 추가(`test_settings.py` 2건, `test_registry.py` 2건) — 신규
+   카탈로그 항목 등록 확인, `:free` 접미사 가격 처리, 비-free 프로바이더의 일반 모델은
+   여전히 가격 미상 처리되는지.
+
+### 오류/수정
+
+- 로컬 환경에 `prometheus_client`가 설치돼 있지 않아 `test_prom`/`test_simulator_scenarios`
+  2개 모듈이 import 실패 — pyproject.toml에는 선언돼 있었으나 editable install 시점
+  이후 추가된 의존성이 재설치 없이는 안 잡혀 있었던 것. `pip install -e .` 재실행으로
+  해결(코드 변경 아님, 환경 문제). 전체 220건 테스트 통과(신규 4건 포함) 확인.
+
+### 설계 결정
+
+- **모델 단위 무료 판정이 필요한 프로바이더(OpenRouter)는 규칙(`:free` 접미사 감지)으로,
+  프로바이더 단위로 충분한 경우(Cerebras/SambaNova/Gemini)는 카탈로그의 `free` 플래그로**
+  — 두 메커니즘을 혼용하지 않고 프로바이더의 실제 과금 구조에 맞춰 선택. Zhipu처럼 혼재
+  구조인데 공식적으로 구분 가능한 접미사가 없는 경우는 안전한 쪽(가격 미상 → 보수적 제외)을
+  기본값으로 두고, forge.yaml에 기본 반영하지 않음(README 철학 "Adding a provider is just
+  an API key" 유지 — 아무도 안 쓰는 provider 설정이 기본 파일에 끼어들지 않게).
+- `free` 플래그의 의미를 "결제수단 미연결 시 기본 경로"로 명확히 함(기존 NVIDIA 관례와
+  통일) — 사용자가 나중에 카드를 연결하면 과금 전환될 수 있다는 점을 README/주석에 명시.
+
+### 남은 문제 및 다음 할 일
+
+- [ ] 사용자가 실키(Cerebras/SambaNova/Gemini/Zhipu)로 `forge doctor`/`forge start` 실연동 검증
+- [ ] SambaNova/Zhipu의 API 키 env var명(`SAMBANOVA_API_KEY`/`ZAI_API_KEY`)이 서드파티
+      관례일 뿐 공식 문서에 미명시 — 추후 공식 확정되면 재확인
+- [ ] Gemini 정확한 RPM/RPD 수치가 공식 문서에서 대시보드로 위임돼 실측 필요(M2-18과 동일 성격)
+
+### 블로그/포트폴리오 소재
+
+- "무료 티어 vs 트라이얼 크레딧 구분하기 — LLM 게이트웨이에 프로바이더를 추가할 때
+  놓치기 쉬운 함정"과, `:free` 접미사 하드코딩 대신 규칙화한 이유.
+
+### Learning Recovery
+
+- AI가 주도: 5개 프로바이더 공식 문서 병렬 조사, 설계(모델 단위 vs 프로바이더 단위 free
+  판정 분리), 테스트 작성.
+- 다음에 직접 설명해보면 좋을 질문: (1) `registry.merge_discovered`에서 `:free` 접미사
+  판정이 `pconf.free`보다 먼저/나중에 적용돼도 결과가 같은 이유, (2) SambaNova의
+  "1회성 $5 크레딧"과 "결제수단 미연결 시 Free Tier"가 왜 서로 다른 개념인지.
+
 ## 2026-07-09 — M3 플랫폼화 (feat/m3-platform)
 
 ### 한 일
