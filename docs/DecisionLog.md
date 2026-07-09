@@ -1,5 +1,13 @@
 # Decision Log
 
+## 2026-07-09 — M3 범위 결정 (Approval Gates)
+
+**결정**:
+- ① Dashboard는 PRD의 Next.js 대신 **FastAPI가 서빙하는 내장 정적 SPA**(단일 HTML) — pip 설치만으로 동작해야 하는 도구 특성상 Node 툴체인 요구는 채택 장벽. DESIGN.md §5.10 갱신
+- ② Prometheus 구현에 **prometheus-client 의존성 승인**
+- ③ **PostgreSQL 보류** — 단일 로컬 사용자는 SQLite로 충분, Repository 인터페이스는 준비돼 있어 실수요 시 구현
+- 부수: Redis(설계상 "필요 시"), 멀티 키 로테이션·A/B·AI Judge는 후속으로 유지
+
 주요 의사결정과 그 근거를 기록한다. (규칙: [CLAUDE.md](../CLAUDE.md) Working Rules 5)
 
 ---

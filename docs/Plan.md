@@ -4,9 +4,29 @@
 > 마일스톤 전체와 설계 근거는 [DESIGN.md](../DESIGN.md) §10이 단일 소스다. 이 문서는 "지금 하는 작업"의 실행 계획만 담는다.
 > M1 기록: [WorkLog.md](WorkLog.md) 2026-07-09 항목 (13/13 완료, main `6e99236`).
 
-## 현재 마일스톤: M2.5 — 정리 스프린트 (진행중)
+## 현재 마일스톤: M3 — 플랫폼화 (진행중)
 
-목표: M3 착수 전 기반 정리 — 벤치마크 시드, 테스트 하네스, 배포 패키징.
+목표: 학습 루프 + 관측 가능성. 범위 결정은 DecisionLog(M3 범위 결정) 참조.
+진행 방식: 브랜치 `feat/m3-platform` → 로컬 squash merge.
+
+| # | 작업 | DESIGN.md | 담당 | 상태 |
+| --- | --- | --- | --- | --- |
+| 27 | **Capability 학습 루프** — 텔레메트리 점수 보정(±2 클램프) + tools feature 자동 강등 | §5.11-3 | 직접 | 진행중 |
+| 28 | **내장 정적 대시보드** — 단일 HTML SPA, `/dashboard/ui` (Next.js 대체 — 결정 ①) | §5.10 | Opus 위임 | 진행중 |
+| 29 | **Prometheus `/metrics`** — prometheus-client, JSON은 `/v1/stats` 유지 | §5.7 | Sonnet 위임 | 진행중 |
+| 30 | PostgreSQL Repository | §5.7 | — | 보류 (결정 ③) |
+| 31 | Redis StateStore | §5.2 | — | 보류 (설계: 멀티 인스턴스 시) |
+| 32 | 멀티 API 키 로테이션 | §10 | — | 후속 |
+| 33 | A/B 테스팅, AI Judge | §10 | — | 후속 (별도 설계) |
+
+완료 기준: 학습 루프가 request_metrics 집계로 유효 점수를 보정하고 임계 초과 시 tools
+강등 + 로그, 대시보드가 브라우저에서 상태/추이 시각화, `/metrics`가 Prometheus 포맷 반환.
+전체 테스트 통과.
+
+---
+
+## 완료: M2.5 — 정리 스프린트 (main `3138061`)
+
 진행 방식: 브랜치 `feat/m2.5-cleanup` → 로컬 squash merge. 이후 사용자 통합 검증 → M3.
 
 | # | 작업 | 근거 | 담당 | 상태 |

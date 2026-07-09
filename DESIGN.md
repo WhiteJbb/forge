@@ -413,7 +413,7 @@ policies:
 
 ### 5.10 Dashboard (M3)
 
-- Next.js + Tailwind + Recharts, `dashboard/` 별도 앱. Forge의 `/dashboard` + `/v1/stats` JSON만 소비 (백엔드 결합 없음).
+- ~~Next.js + Tailwind + Recharts 별도 앱~~ → **FastAPI가 서빙하는 내장 정적 SPA(단일 HTML)로 변경** (2026-07-09 결정, DecisionLog) — pip 설치만으로 동작해야 하는 도구에 Node 툴체인 요구는 채택 장벽. `/dashboard/ui`에서 서빙, `/dashboard` + `/v1/stats` JSON만 소비 (백엔드 결합 없음).
 - 화면: ① Provider/모델 상태 보드 (tier별, 쿨다운 타이머) ② 요청 추이/성공률/레이턴시 차트 ③ 정책 뷰어(현재 forge.yaml 정책 시각화) ④ 최근 failover 이벤트 로그.
 - M1~M2 동안은 기존 JSON 엔드포인트로 충분하므로 착수하지 않는다.
 
