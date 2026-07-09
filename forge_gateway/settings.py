@@ -295,9 +295,16 @@ PROVIDER_CATALOG: "list[dict]" = [
                           "capabilities": {"code": 8, "debug": 7, "refactor": 7,
                                            "docs": 8, "context": 8, "speed": 9}},
      }},
+    # SambaNova는 free: True로 잘못 표시했던 걸 재검증 후 정정함(2026-07-09) — 실제로는
+    # $5 1회성 트라이얼 크레딧(카드 불필요, ~30일)뿐이고, 소진되면 카드 없이는 402
+    # CREDITS_EXHAUSTED로 완전히 막힌다(SambaNova 직원이 커뮤니티에서 "free tier를 별도로
+    # 유지할 계획 없다"고 직접 확인). "결제수단 미연결 시 RPM 20" 문서는 rate-limit
+    # *등급* 설명일 뿐 소진 후 동작과는 무관 — 다른 provider들처럼 paid 취급.
+    # capability_seed는 여전히 유효(모델 품질 순위는 과금 여부와 무관) — allow_paid:false면
+    # 자동 제외됨.
     {"name": "sambanova", "key_env": "SAMBANOVA_API_KEY",
      "api_base": "https://api.sambanova.ai/v1",
-     "free": True, "rpm": 20,  # 공식: 결제수단 미연결 시 RPM 20 / RPD 20 / TPD 200K
+     "rpm": 20,
      "capability_seed": {
          # SWE-bench Verified 66.0%(2차 자료, 공식 테크리포트 미대조) — Production
          "DeepSeek-V3.1": {"tier": "tier2",

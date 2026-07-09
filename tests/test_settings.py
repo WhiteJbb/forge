@@ -222,12 +222,11 @@ class AutoProviderTests(unittest.TestCase):
         self.assertEqual(added.api_base, "https://openrouter.ai/api/v1")
 
     def test_free_tier_providers_registered_when_key_present(self):
-        """Cerebras/SambaNova/Gemini — recurring 무료 확인됨 (Research.md 2026-07-09) -> free: true"""
+        """Cerebras/Gemini — recurring 무료 확인됨 (Research.md 2026-07-09) -> free: true"""
         os.environ["CEREBRAS_API_KEY"] = "csk-test"
-        os.environ["SAMBANOVA_API_KEY"] = "sn-test"
         os.environ["GEMINI_API_KEY"] = "gm-test"
         config = self._load(VALID_YAML)
-        for name in ("cerebras", "sambanova", "gemini"):
+        for name in ("cerebras", "gemini"):
             provider = config.provider(name)
             self.assertIsNotNone(provider, f"{name} should auto-register")
             self.assertTrue(provider.free, f"{name} should be marked free")
@@ -237,6 +236,14 @@ class AutoProviderTests(unittest.TestCase):
         os.environ["ZAI_API_KEY"] = "zai-test"
         config = self._load(VALID_YAML)
         provider = config.provider("zai")
+        self.assertIsNotNone(provider)
+        self.assertFalse(provider.free)
+
+    def test_sambanova_not_marked_free(self):
+        """재검증(2026-07-09) 결과 $5 1회성 트라이얼뿐 — recurring 무료 아님, paid 취급"""
+        os.environ["SAMBANOVA_API_KEY"] = "sn-test"
+        config = self._load(VALID_YAML)
+        provider = config.provider("sambanova")
         self.assertIsNotNone(provider)
         self.assertFalse(provider.free)
 

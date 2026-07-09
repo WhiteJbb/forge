@@ -4,6 +4,76 @@
 
 ---
 
+## 2026-07-09 — 정정: SambaNova free 오판정 수정 (feat/free-provider-catalog, 계속)
+
+### 배경
+
+사용자가 "SambaNova는 $5 크레딧 주고 끝인거같던데"라고 반박. 앞서 커밋에서
+SambaNova를 recurring 무료(카드 없이 계속 사용 가능)로 판단해 `free: true`로
+등록했는데, 사용자의 실사용 경험과 충돌.
+
+### 한 일
+
+1. 웹 재검증(서브에이전트) — 결과: 사용자가 맞음. `cloud.sambanova.ai/plans` 공식
+   페이지는 Free 플랜을 "$5 in free API credits, no credit card required, 30일
+   만료"로만 설명하고 recurring 무료 등급 언급이 없음. 가격표에 $0 모델이 없고 전
+   모델 유료. 커뮤니티 사례에서 크레딧 소진 시 `402 CREDITS_EXHAUSTED`로 완전히
+   막힘 확인. SambaNova 직원이 2025-02 공식 커뮤니티에서 "free tier를 별도 유지할
+   계획 없다"고 직접 확인.
+2. **원인 분석**: 이전 조사가 "카드 없이 되는 rate-limit *등급* 문서가 있는가"만
+   확인했고 "그 등급의 크레딧/기간이 소진되면 실제로 어떻게 되는가"는 확인하지
+   않은 방법론적 결함. rate-limit 분류와 과금 여부는 서로 다른 축인데 혼동함.
+3. `forge_gateway/settings.py`의 `PROVIDER_CATALOG`에서 sambanova의 `free: True`
+   제거 → 다른 유료 provider와 동일하게 취급(discovery 모델은 price 미상, `allow_paid:
+   false`에서 자동 제외). `capability_seed`(DeepSeek-V3.1/gpt-oss-120b/MiniMax-M2.7)는
+   모델 품질 순위라 과금 여부와 무관하므로 유지.
+4. `.env.example`/README에서 SambaNova를 "무료" 목록에서 제거하고 실제 상태(1회성
+   트라이얼, paid 취급) 명시.
+5. 테스트 수정 — 기존 `test_free_tier_providers_registered_when_key_present`에서
+   sambanova 제거, `test_sambanova_not_marked_free` 신규 추가. 전체 223건 통과.
+6. **같은 실수 재발 방지** — Cerebras는 자체 문서가 무료 등급을 "Free **Trial**"로
+   명명하고 있어(SambaNova와 같은 함정 가능성), Gemini도 포함해 "소진/기간 후 실제
+   동작"까지 재검증하는 별도 조사를 진행 중(다음 세션 기록에 결과 반영).
+
+### 오류/수정
+
+- **SambaNova `free: true` 오판정** (사용자 발견) — 증상: `allow_paid: false`
+  정책을 켜도 실제로는 과금될 수 있는 provider가 "무료"로 분류돼 통과됨. 원인:
+  "카드 불필요"와 "recurring 무료"를 혼동(위 원인 분석 참조). 수정: free 플래그
+  제거, 문서 정정.
+
+### 설계 결정 / 교훈
+
+- **"카드 불필요"≠"recurring 무료"** — 무료 여부를 판정할 때는 반드시 "크레딧/기간
+  소진 후 동작"까지 확인해야 한다. 앞으로 새 provider를 free로 등록하기 전에 이
+  체크리스트를 표준으로 삼음: (1) rate-limit 등급 문서 존재 여부, (2) 총량/기간
+  상한 존재 여부, (3) 상한 도달 시 완전 차단인지 저속 유지인지, (4) 커뮤니티 실사용
+  사례로 교차검증.
+- 사용자의 반박을 그대로 받아들이지 않고 재검증부터 했다 — 반박이 맞을 수도, 우리
+  판단이 맞을 수도 있어 실증이 먼저(Development Guide "추측 금지, 실증 우선" 원칙).
+
+### 남은 문제 및 다음 할 일
+
+- [x] Cerebras/Gemini "소진 후 동작" 재검증 완료 — 둘 다 문제없음(총량 상한/만료 없음),
+      `free: true` 유지. Research.md 정정 섹션에 근거 추가.
+- [ ] SambaNova capability_seed(DeepSeek-V3.1/gpt-oss-120b/MiniMax-M2.7)는 유지했으나
+      실사용자가 `allow_paid: false` 없이 쓰면 예상치 못한 과금 가능 — 문서 강조 유지
+- [ ] Cerebras 이용약관 원문 직접 대조는 못함(문서 간 명칭 불일치 "Free Trial" vs
+      "Free"만 확인) — 완전한 확정은 아님, 정책 변경 시 재확인 필요
+
+### 블로그/포트폴리오 소재
+
+- "무료 티어 판정에서 진짜 확인해야 하는 질문: '카드가 필요 없다'가 아니라 '크레딧이
+  0이 되면 무슨 일이 생기나'"
+
+### Learning Recovery
+
+- AI가 주도: 재검증 리서치, 원인 분석(rate-limit 등급 vs 과금 여부 혼동), 코드/문서
+  정정.
+- 다음에 직접 설명해보면 좋을 질문: 왜 `capability_seed`는 유지하면서 `free` 플래그만
+  제거하는 게 맞는 선택인지(모델 품질과 과금 여부가 독립적인 축이라는 것).
+
+
 ## 2026-07-09 — 신규 무료 provider 벤치마크 시드 + 대시보드 상태 정체 조사 (feat/free-provider-catalog, 계속)
 
 ### 배경

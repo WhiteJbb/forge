@@ -62,6 +62,7 @@
 | F4 | .env.example / README "자동 인식" 목록 갱신, forge.yaml 주석에 출처+확인일 남기기 | — | 완료 |
 | F5 | 카탈로그 확장 회귀 테스트 (`test_settings.py`, `test_registry.py`) | — | 완료 |
 | F6 | 사용자 실환경 `forge models`/`GET /v1/models`로 실제 discovery id 확인 → Cerebras/SambaNova/Gemini 상위 모델 벤치마크 리서치 → `PROVIDER_CATALOG`에 `capability_seed` 필드 신설(provider 미선언 상태에서도 tier/capabilities 시드 적용, anthropic의 `default_models`와 같은 매커니즘 확장) | Research.md 2026-07-09 "신규 무료 provider 벤치마크 시드" | 완료 |
+| F7 | **정정**: SambaNova `free: true`는 오판정이었음(사용자 반박으로 발견) — 재검증 결과 recurring 무료가 아니라 $5 1회성 트라이얼뿐, 소진 시 402로 완전히 막힘. `free` 플래그 제거(paid 취급, capability_seed는 유지), .env.example/README 정정. 같은 기준으로 Cerebras/Gemini도 재검증 → 둘 다 문제없어 `free: true` 유지 | Research.md 2026-07-09 "정정: SambaNova는 recurring 무료가 아니었음" | 완료 |
 
 완료 기준: 신규 프로바이더가 `forge doctor`/`forge models`에 인식되고, `allow_paid: false`
 정책에서 확인된 무료 모델만 통과, 전체 테스트 통과.
