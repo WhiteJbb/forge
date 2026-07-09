@@ -19,6 +19,10 @@
 
 - 전체 153건 테스트 3회 연속 통과. editable install 후 `forge models` 동작
 
+### 검증 중 발견·수정 (사용자 리포트)
+
+- **.env 미인식**: `forge doctor`가 .env의 키를 못 읽음 — M1 재작성 때 .env 로드가 run_forge.bat에만 남고 CLI/서버 경로에서 빠짐 → `load_config`가 설정 파일 옆 .env를 자동 주입하도록 수정 (셸 변수 우선, stdlib 구현, 테스트 4건). main `b9736d7`
+
 ### 남은 것
 
 - [ ] **사용자 통합 검증**: `forge doctor` → `forge start` → Cline(모델 auto) + Claude Code(`ANTHROPIC_BASE_URL=http://127.0.0.1:4000`) 실사용, Ollama/OpenRouter 키 있으면 함께
