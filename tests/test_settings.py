@@ -6,7 +6,12 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from forge_gateway.settings import ConfigError, load_config, load_dotenv
+from forge_gateway.settings import (
+    PROVIDER_CATALOG,
+    ConfigError,
+    load_config,
+    load_dotenv,
+)
 
 VALID_YAML = """
 version: 1
@@ -53,6 +58,12 @@ class SettingsLoadTests(unittest.TestCase):
     def setUp(self):
         self._tmpdir = tempfile.TemporaryDirectory()
         self.addCleanup(self._tmpdir.cleanup)
+        # 밀폐: 러너 환경의 실키가 auto_providers로 끼어들지 않게
+        env_patch = patch.dict(os.environ, {}, clear=False)
+        env_patch.start()
+        self.addCleanup(env_patch.stop)
+        for item in PROVIDER_CATALOG:
+            os.environ.pop(item["key_env"], None)
 
     def _write(self, content: str) -> Path:
         path = Path(self._tmpdir.name) / "forge.yaml"
@@ -145,6 +156,68 @@ class DotenvTests(unittest.TestCase):
             os.environ.pop("FORGE_T5", None)
             load_config(self.root / "forge.yaml")
             self.assertEqual(os.environ.get("FORGE_T5"), "via_load_config")
+
+
+class AutoProviderTests(unittest.TestCase):
+    """카탈로그 기반 provider 자동 등록 (§8.1 — 키만 .env에 넣으면 끝)"""
+
+    def setUp(self):
+        self._tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmpdir.cleanup)
+        self.path = Path(self._tmpdir.name) / "forge.yaml"
+        # 테스트 환경에 남아 있을 수 있는 카탈로그 키 전부 제거
+        self._env = patch.dict(os.environ, {}, clear=False)
+        self._env.start()
+        self.addCleanup(self._env.stop)
+        for item in PROVIDER_CATALOG:
+            os.environ.pop(item["key_env"], None)
+
+    def _load(self, yaml_text: str):
+        self.path.write_text(yaml_text, encoding="utf-8")
+        return load_config(self.path)
+
+    def test_detected_key_registers_provider(self):
+        os.environ["OPENROUTER_API_KEY"] = "sk-or-test"
+        config = self._load(VALID_YAML)
+        names = {p.name for p in config.providers}
+        self.assertIn("openrouter", names)
+        added = config.provider("openrouter")
+        self.assertTrue(added.auto_registered)
+        self.assertEqual(added.api_base, "https://openrouter.ai/api/v1")
+
+    def test_explicit_declaration_wins(self):
+        os.environ["OPENROUTER_API_KEY"] = "sk-or-test"
+        # providers 목록에 이어붙이기 위해 원본의 providers 섹션 뒤에 삽입
+        yaml_text = VALID_YAML.replace(
+            "models:",
+            "  - name: openrouter\n"
+            "    api_base: \"https://my-proxy.example/v1\"\n"
+            "    api_key_env: OPENROUTER_API_KEY\n"
+            "models:",
+        )
+        config = self._load(yaml_text)
+        matches = [p for p in config.providers if p.name == "openrouter"]
+        self.assertEqual(len(matches), 1)  # 중복 등록 없음
+        self.assertEqual(matches[0].api_base, "https://my-proxy.example/v1")
+        self.assertFalse(matches[0].auto_registered)
+
+    def test_opt_out_flag(self):
+        os.environ["OPENROUTER_API_KEY"] = "sk-or-test"
+        config = self._load(VALID_YAML + "auto_providers: false\n")
+        self.assertIsNone(config.provider("openrouter"))
+
+    def test_anthropic_gets_default_models(self):
+        os.environ["ANTHROPIC_API_KEY"] = "sk-ant-test"
+        config = self._load(VALID_YAML)
+        provider = config.provider("anthropic")
+        self.assertIsNotNone(provider)
+        self.assertFalse(provider.discovery)  # OpenAI 호환 /models 없음
+        anthropic_models = [m.id for m in config.models if m.id.startswith("anthropic:")]
+        self.assertGreaterEqual(len(anthropic_models), 3)
+
+    def test_no_keys_no_changes(self):
+        config = self._load(VALID_YAML)
+        self.assertEqual({p.name for p in config.providers}, {"nvidia"})
 
 
 if __name__ == "__main__":

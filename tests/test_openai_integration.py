@@ -21,6 +21,7 @@ from forge_gateway.settings import load_config
 
 CONFIG_YAML = """
 version: 1
+auto_providers: false
 providers:
   - name: nvidia
     api_key_env: NVIDIA_API_KEY

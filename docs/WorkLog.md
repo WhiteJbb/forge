@@ -17,6 +17,12 @@
 
 - 전체 185건 테스트 통과, 스모크 31항목 통과 (reload 후 exporter 생존 포함)
 
+### 후속 (사용자 피드백 반영)
+
+- **대시보드 밀도**: 차트를 상단으로, 유휴 discovered 모델 접기 토글 (main `61b6283`)
+- **프로바이더 자동 등록** (auto_providers): 카탈로그 8종(nvidia/openrouter/groq/mistral/deepseek/openai/anthropic/ollama) — .env에 키만 넣으면 provider 자동 등록 + discovery. 명시 선언 우선, `auto_providers: false`로 opt-out, anthropic은 대표 모델 자동 공급
+- 그 과정에서 **server.py의 import 부작용 발견·제거**: 모듈 레벨 `app = create_app()`이 테스트/도구 import 시 저장소 설정과 .env를 로드해 실키를 주입 → 시뮬레이터 테스트가 실제 API로 유출되던 문제. 테스트 config 밀폐화(auto_providers: false + 카탈로그 키 격리) 포함. 전체 190건 통과
+
 ## 2026-07-09 — M2.5 정리 스프린트 (feat/m2.5-cleanup)
 
 ### 한 일

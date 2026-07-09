@@ -62,6 +62,7 @@ def _config_text(api_base: str, db_path: str, rpm=None) -> str:
     """
     rpm_line = f"    rpm: {rpm}\n" if rpm is not None else ""
     return f"""version: 1
+auto_providers: false  # 밀폐 테스트 — 러너 환경의 실키가 provider로 끼어들지 않게
 server:
   host: 127.0.0.1
   port: 4000

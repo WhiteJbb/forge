@@ -45,7 +45,9 @@ Forge listens on `http://127.0.0.1:4000`. Check `http://127.0.0.1:4000/health` t
 
 > If the `forge` command collides with Foundry's on your PATH, use the `forge-gw` alias.
 
-Configuration lives in [`forge.yaml`](forge.yaml) — providers, model tiers/capabilities, cooldowns, timeouts. It ships with a working NVIDIA free-tier setup.
+Configuration lives in [`forge.yaml`](forge.yaml) — providers, model tiers/capabilities, policies, cooldowns, timeouts. It ships with a working NVIDIA free-tier setup.
+
+**Adding a provider is just an API key.** Drop `OPENROUTER_API_KEY` / `GROQ_API_KEY` / `MISTRAL_API_KEY` / `DEEPSEEK_API_KEY` / `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` (or `OLLAMA_API_BASE`) into `.env` and Forge auto-registers the provider at startup — models are discovered and join the routing pool automatically. Explicit `forge.yaml` entries always take precedence; set `auto_providers: false` to opt out. Keep paid spend in check with an `allow_paid: false` or `max_cost_per_request` policy.
 
 ## Connect your coding agent
 

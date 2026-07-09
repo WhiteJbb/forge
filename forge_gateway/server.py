@@ -212,20 +212,21 @@ def create_app(config_path: str = "forge.yaml") -> FastAPI:
                           "/health", "/v1/stats", "/dashboard"],
         }
 
-    # main()에서 uvicorn에 넘길 수 있게 보관
     app.state.forge_config = config
     return app
 
 
-app = create_app()
+# 주의: 모듈 레벨에서 create_app()을 실행하지 않는다 — import 부작용(설정/.env 로드,
+# 설정 없으면 SystemExit)이 테스트와 도구를 오염시킨다. 진입점은 main()/CLI(forge start).
 
 
 def main():
     import uvicorn
 
+    app = create_app()
     config = app.state.forge_config
     uvicorn.run(
-        "forge_gateway.server:app",
+        app,
         host=config.server.host,
         port=config.server.port,
         log_level="debug" if config.server.debug else "info",

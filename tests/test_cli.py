@@ -15,7 +15,9 @@ from unittest import mock
 from forge_gateway import cli
 from forge_gateway.settings import load_config
 
-_PROVIDER_ENV_KEYS = ("NVIDIA_API_KEY", "OPENROUTER_API_KEY", "ANTHROPIC_API_KEY", "FORGE_API_KEY")
+from forge_gateway.settings import PROVIDER_CATALOG
+
+_PROVIDER_ENV_KEYS = tuple(item["key_env"] for item in PROVIDER_CATALOG) + ("FORGE_API_KEY",)
 
 
 class _EnvIsolatedTestCase(unittest.TestCase):

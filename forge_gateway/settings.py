@@ -40,6 +40,7 @@ class ProviderConfig(BaseModel):
     rpm: Optional[int] = None
     max_concurrent: Optional[int] = None
     pass_reasoning: bool = False
+    auto_registered: bool = False  # 카탈로그 자동 등록 여부 (로그/doctor 표시용)
 
     @field_validator("api_key_env")
     @classmethod
@@ -211,6 +212,7 @@ class ForgeConfig(BaseModel):
     analyzer: AnalyzerConfig = Field(default_factory=AnalyzerConfig)
     tuner: TunerConfig = Field(default_factory=TunerConfig)
     policies: list[PolicyRule] = Field(default_factory=list)
+    auto_providers: bool = True  # 카탈로그 자동 등록 (§8.1) — false로 비활성화
 
     @model_validator(mode="after")
     def _model_providers_exist(self) -> "ForgeConfig":
@@ -233,6 +235,66 @@ class ForgeConfig(BaseModel):
 
 class ConfigError(Exception):
     """forge.yaml 로드/검증 실패 — 부팅을 중단해야 하는 에러"""
+
+
+# --- 프로바이더 카탈로그 (§8.1 "설치 5분") ---------------------------------
+#
+# 환경변수에 키가 있고 forge.yaml에 같은 이름의 provider가 없으면 자동 등록한다.
+# 명시적 선언이 항상 우선. `auto_providers: false`로 전체 비활성화.
+# discovery가 안 되는 프로바이더(anthropic)는 default_models로 모델을 공급한다.
+PROVIDER_CATALOG: "list[dict]" = [
+    {"name": "nvidia", "key_env": "NVIDIA_API_KEY",
+     "api_base": "https://integrate.api.nvidia.com/v1",
+     "free": True, "rpm": 40, "max_concurrent": 8},
+    {"name": "openrouter", "key_env": "OPENROUTER_API_KEY",
+     "api_base": "https://openrouter.ai/api/v1"},
+    {"name": "groq", "key_env": "GROQ_API_KEY",
+     "api_base": "https://api.groq.com/openai/v1"},
+    {"name": "mistral", "key_env": "MISTRAL_API_KEY",
+     "api_base": "https://api.mistral.ai/v1"},
+    {"name": "deepseek", "key_env": "DEEPSEEK_API_KEY",
+     "api_base": "https://api.deepseek.com/v1"},
+    {"name": "openai", "key_env": "OPENAI_API_KEY",
+     "api_base": "https://api.openai.com/v1"},
+    {"name": "anthropic", "key_env": "ANTHROPIC_API_KEY",
+     "litellm_prefix": "anthropic", "discovery": False,
+     # OpenAI 호환 /models가 없어 discovery 불가 — 대표 모델을 카탈로그가 공급
+     "default_models": ["claude-opus-4-8", "claude-sonnet-5",
+                        "claude-haiku-4-5-20251001"]},
+    {"name": "ollama", "key_env": "OLLAMA_API_BASE",  # 값 자체가 base URL
+     "litellm_prefix": "ollama", "free": True, "api_base_from_env": True},
+]
+
+
+def apply_auto_providers(config: "ForgeConfig") -> "list[str]":
+    """카탈로그 기반 자동 등록. 추가된 provider 이름 목록을 반환한다."""
+    if not config.auto_providers:
+        return []
+    declared = {p.name for p in config.providers}
+    added: list[str] = []
+    for item in PROVIDER_CATALOG:
+        name = item["name"]
+        if name in declared:
+            continue  # 명시 선언 우선
+        key_value = os.environ.get(item["key_env"], "").strip()
+        if not key_value:
+            continue
+        api_base = key_value if item.get("api_base_from_env") else item.get("api_base")
+        config.providers.append(ProviderConfig(
+            name=name,
+            litellm_prefix=item.get("litellm_prefix", "openai"),
+            api_base=api_base,
+            api_key_env=None if item.get("api_base_from_env") else item["key_env"],
+            discovery=item.get("discovery", True),
+            free=item.get("free", False),
+            rpm=item.get("rpm"),
+            max_concurrent=item.get("max_concurrent"),
+            auto_registered=True,
+        ))
+        for model_id in item.get("default_models", []):
+            config.models.append(ModelOverride(id=f"{name}:{model_id}"))
+        added.append(name)
+    return added
 
 
 def load_dotenv(path: str | Path = ".env") -> int:
@@ -285,6 +347,14 @@ def load_config(path: str | Path = "forge.yaml") -> ForgeConfig:
         raise ConfigError(f"{path} must contain a mapping at top level")
 
     try:
-        return ForgeConfig(**raw)
+        config = ForgeConfig(**raw)
     except Exception as e:
         raise ConfigError(f"invalid config in {path}: {e}") from e
+
+    added = apply_auto_providers(config)
+    if added:
+        import logging
+        logging.getLogger("forge").info(
+            "auto-registered providers from environment keys: %s "
+            "(disable with auto_providers: false)", ", ".join(added))
+    return config
