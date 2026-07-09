@@ -1,10 +1,12 @@
-"""forge.yaml 로더 검증 테스트 (DESIGN.md §5.9, src/settings.py)"""
+"""forge.yaml 로더 검증 테스트 (DESIGN.md §5.9, forge_gateway/settings.py)"""
 
+import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
-from forge_gateway.settings import ConfigError, load_config
+from forge_gateway.settings import ConfigError, load_config, load_dotenv
 
 VALID_YAML = """
 version: 1
@@ -93,6 +95,56 @@ class SettingsLoadTests(unittest.TestCase):
         path = self._write("- just\n- a\n- list\n")
         with self.assertRaises(ConfigError):
             load_config(path)
+
+
+class DotenvTests(unittest.TestCase):
+    """load_dotenv — run_forge.bat 없이도 .env가 잡혀야 한다 (§8.3)"""
+
+    def setUp(self):
+        self._tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmpdir.cleanup)
+        self.root = Path(self._tmpdir.name)
+
+    def _write_env(self, content: str) -> Path:
+        path = self.root / ".env"
+        path.write_text(content, encoding="utf-8")
+        return path
+
+    def test_loads_key_values_with_comments_quotes_export(self):
+        path = self._write_env(
+            "# 주석\n"
+            "FORGE_T1=plain\n"
+            'FORGE_T2="quoted value"\n'
+            "export FORGE_T3='single'\n"
+            "\n"
+            "not-a-pair\n"
+        )
+        with patch.dict(os.environ, {}, clear=False):
+            for k in ("FORGE_T1", "FORGE_T2", "FORGE_T3"):
+                os.environ.pop(k, None)
+            loaded = load_dotenv(path)
+            self.assertEqual(loaded, 3)
+            self.assertEqual(os.environ["FORGE_T1"], "plain")
+            self.assertEqual(os.environ["FORGE_T2"], "quoted value")
+            self.assertEqual(os.environ["FORGE_T3"], "single")
+
+    def test_does_not_override_existing_env(self):
+        path = self._write_env("FORGE_T4=from_file\n")
+        with patch.dict(os.environ, {"FORGE_T4": "from_shell"}):
+            loaded = load_dotenv(path)
+            self.assertEqual(loaded, 0)
+            self.assertEqual(os.environ["FORGE_T4"], "from_shell")
+
+    def test_missing_file_returns_zero(self):
+        self.assertEqual(load_dotenv(self.root / "nope.env"), 0)
+
+    def test_load_config_pulls_env_from_config_dir(self):
+        (self.root / "forge.yaml").write_text(VALID_YAML, encoding="utf-8")
+        self._write_env("FORGE_T5=via_load_config\n")
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("FORGE_T5", None)
+            load_config(self.root / "forge.yaml")
+            self.assertEqual(os.environ.get("FORGE_T5"), "via_load_config")
 
 
 if __name__ == "__main__":

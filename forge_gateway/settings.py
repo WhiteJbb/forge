@@ -224,9 +224,44 @@ class ConfigError(Exception):
     """forge.yaml 로드/검증 실패 — 부팅을 중단해야 하는 에러"""
 
 
-def load_config(path: str | Path = "forge.yaml") -> ForgeConfig:
-    """forge.yaml을 읽고 검증한다. 실패 시 명확한 메시지와 함께 ConfigError."""
+def load_dotenv(path: str | Path = ".env") -> int:
+    """.env의 KEY=VALUE를 os.environ에 주입한다 (이미 설정된 변수는 덮어쓰지 않음).
+
+    표준 라이브러리만 사용하는 최소 구현 — 주석/빈 줄/`export ` 접두어/양끝 따옴표 지원.
+    반환값: 주입한 변수 수. 파일이 없으면 0.
+    """
     path = Path(path)
+    if not path.exists():
+        return 0
+    loaded = 0
+    try:
+        for line in path.read_text(encoding="utf-8-sig").splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            if line.startswith("export "):
+                line = line[len("export "):]
+            key, _, value = line.partition("=")
+            key = key.strip()
+            value = value.strip()
+            if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
+                value = value[1:-1]
+            if key and key not in os.environ:
+                os.environ[key] = value
+                loaded += 1
+    except OSError:
+        return loaded
+    return loaded
+
+
+def load_config(path: str | Path = "forge.yaml") -> ForgeConfig:
+    """forge.yaml을 읽고 검증한다. 실패 시 명확한 메시지와 함께 ConfigError.
+
+    같은 디렉터리의 .env를 먼저 로드한다 — CLI/서버 어느 진입점이든
+    run_forge.bat 없이 .env만으로 키가 잡히게 (§8.3).
+    """
+    path = Path(path)
+    load_dotenv(path.resolve().parent / ".env")
     if not path.exists():
         raise ConfigError(f"config file not found: {path.resolve()}")
 
