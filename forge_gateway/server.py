@@ -261,12 +261,50 @@ def create_app(config_path: str = "forge.yaml") -> FastAPI:
 # 설정 없으면 SystemExit)이 테스트와 도구를 오염시킨다. 진입점은 main()/CLI(forge start).
 
 
-def print_banner(config) -> None:
-    """기동 직후 '그래서 뭘 하면 되는지'를 알려주는 안내 (U2 — CLI start와 main 공용)"""
-    base = f"http://{config.server.host}:{config.server.port}"
-    print(f"""
-  Forge is up.
+# 박스문자 배너(LiteLLM 스타일). Windows에서 stdout이 실제 인터랙티브 콘솔에 붙어있으면
+# (isatty=True) Python 3.6+가 코드페이지(cp949 등)를 무시하고 콘솔 API로 유니코드를
+# 직접 그리므로 정상 출력된다(PEP 528). 다만 로그 리다이렉트(`forge start > forge.log`)나
+# 백그라운드 서비스처럼 stdout이 파이프로 캡처되는 경우 isatty=False가 되어 레거시
+# 코드페이지로 폴백하면서 UnicodeEncodeError로 부팅이 죽을 수 있다 — 그런 경우에만
+# 아래 ASCII 버전으로 조용히 대체한다(print_banner의 try/except).
+_BANNER_ART_UNICODE = r"""
+  ███████╗ ██████╗ ██████╗  ██████╗ ███████╗
+  ██╔════╝██╔═══██╗██╔══██╗██╔════╝ ██╔════╝
+  █████╗  ██║   ██║██████╔╝██║  ███╗█████╗
+  ██╔══╝  ██║   ██║██╔══██╗██║   ██║██╔══╝
+  ██║     ╚██████╔╝██║  ██║╚██████╔╝███████╗
+  ╚═╝      ╚═════╝ ╚═╝  ╚═╝ ╚═════╝ ╚══════╝
+"""
 
+# 순수 ASCII 폴백 — 위 유니코드 배너가 인코딩 실패할 때만 쓴다.
+_BANNER_ART_ASCII = r"""
+  ##########     ######     ########       ########   ##########
+  ##########     ######     ########       ########   ##########
+  ##           ##      ##   ##      ##   ##           ##
+  ##           ##      ##   ##      ##   ##           ##
+  ######       ##      ##   ########     ##    ####   ########
+  ######       ##      ##   ########     ##    ####   ########
+  ##           ##      ##   ##    ##     ##      ##   ##
+  ##           ##      ##   ##    ##     ##      ##   ##
+  ##             ######     ##      ##     ########   ##########
+  ##             ######     ##      ##     ########   ##########
+"""
+
+
+def _print_art() -> None:
+    try:
+        print(_BANNER_ART_UNICODE)
+    except UnicodeEncodeError:
+        print(_BANNER_ART_ASCII)
+
+
+def print_banner(config) -> None:
+    """기동 직후 ASCII 아트 + '그래서 뭘 하면 되는지' 안내 (U2 — CLI start와 main 공용)"""
+    base = f"http://{config.server.host}:{config.server.port}"
+    rule = "-" * 58
+    _print_art()
+    print(rule)
+    print(f"""
   Dashboard      {base}/dashboard/ui
   Health         {base}/health
 
@@ -276,6 +314,7 @@ def print_banner(config) -> None:
 
   Spend guard:   forge guard --no-paid   |   forge guard --max-cost 0.05
 """)
+    print(rule)
 
 
 def main():
