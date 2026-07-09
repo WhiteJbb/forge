@@ -47,7 +47,9 @@ Forge listens on `http://127.0.0.1:4000`. Check `http://127.0.0.1:4000/health` t
 
 Configuration lives in [`forge.yaml`](forge.yaml) — providers, model tiers/capabilities, policies, cooldowns, timeouts. It ships with a working NVIDIA free-tier setup.
 
-**Adding a provider is just an API key.** Drop `OPENROUTER_API_KEY` / `GROQ_API_KEY` / `MISTRAL_API_KEY` / `DEEPSEEK_API_KEY` / `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` (or `OLLAMA_API_BASE`) into `.env` and Forge auto-registers the provider at startup — models are discovered and join the routing pool automatically. Explicit `forge.yaml` entries always take precedence; set `auto_providers: false` to opt out. Keep paid spend in check with an `allow_paid: false` or `max_cost_per_request` policy — or skip the YAML and run `forge guard --no-paid` / `forge guard --max-cost 0.01` (see [CLI](#cli) below).
+**Adding a provider is just an API key.** Drop `OPENROUTER_API_KEY` / `GROQ_API_KEY` / `MISTRAL_API_KEY` / `DEEPSEEK_API_KEY` / `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` / `CEREBRAS_API_KEY` / `SAMBANOVA_API_KEY` / `GEMINI_API_KEY` / `ZAI_API_KEY` (or `OLLAMA_API_BASE`) into `.env` and Forge auto-registers the provider at startup — models are discovered and join the routing pool automatically. Explicit `forge.yaml` entries always take precedence; set `auto_providers: false` to opt out. Keep paid spend in check with an `allow_paid: false` or `max_cost_per_request` policy — or skip the YAML and run `forge guard --no-paid` / `forge guard --max-cost 0.01` (see [CLI](#cli) below).
+
+Free-tier providers Forge recognizes out of the box: NVIDIA, Cerebras, SambaNova, and Gemini all default to a no-cost path until you attach billing (`allow_paid: false` keeps you there). OpenRouter's `:free`-suffixed models are priced at $0 regardless of provider billing state. Z.ai (GLM) mixes free and paid models on the same key, so it's registered without a blanket free flag — see `.env.example` for how to pin a specific free model (e.g. GLM-4.7-Flash) with a `models:` price override.
 
 ## Connect your coding agent
 

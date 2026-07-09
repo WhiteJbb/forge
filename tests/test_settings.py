@@ -221,6 +221,25 @@ class AutoProviderTests(unittest.TestCase):
         self.assertTrue(added.auto_registered)
         self.assertEqual(added.api_base, "https://openrouter.ai/api/v1")
 
+    def test_free_tier_providers_registered_when_key_present(self):
+        """Cerebras/SambaNova/Gemini — recurring 무료 확인됨 (Research.md 2026-07-09) -> free: true"""
+        os.environ["CEREBRAS_API_KEY"] = "csk-test"
+        os.environ["SAMBANOVA_API_KEY"] = "sn-test"
+        os.environ["GEMINI_API_KEY"] = "gm-test"
+        config = self._load(VALID_YAML)
+        for name in ("cerebras", "sambanova", "gemini"):
+            provider = config.provider(name)
+            self.assertIsNotNone(provider, f"{name} should auto-register")
+            self.assertTrue(provider.free, f"{name} should be marked free")
+
+    def test_zai_registered_without_free_flag(self):
+        """Zhipu는 무료·유료 모델이 혼재 -> 프로바이더 전체를 free로 표시하지 않음"""
+        os.environ["ZAI_API_KEY"] = "zai-test"
+        config = self._load(VALID_YAML)
+        provider = config.provider("zai")
+        self.assertIsNotNone(provider)
+        self.assertFalse(provider.free)
+
     def test_explicit_declaration_wins(self):
         os.environ["OPENROUTER_API_KEY"] = "sk-or-test"
         # providers 목록에 이어붙이기 위해 원본의 providers 섹션 뒤에 삽입

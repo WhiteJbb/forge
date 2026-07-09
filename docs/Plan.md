@@ -47,6 +47,30 @@
 
 > UX 스프린트 완료 (2026-07-09): 테스트 210건 + 스모크 통과.
 
+### M3 후속: 무료 프로바이더 카탈로그 확장 (진행중)
+
+배경: 사용자 요청 — "무료로 쓸 수 있는 API들 싹 긁어서 넣을 수 있게" (2026-07-09 대화).
+방향 결정: 자동 발굴/다중계정 가입(ToS 위반 소지)이 아니라, 공식 문서로 확인된 무료
+프로바이더만 큐레이션해서 카탈로그에 추가 — 리서치 근거는 [Research.md](Research.md) 참조.
+진행 방식: 브랜치 `feat/free-provider-catalog` → PR → squash merge.
+
+| # | 작업 | 근거 | 상태 |
+| --- | --- | --- | --- |
+| F1 | PROVIDER_CATALOG에 Cerebras/SambaNova/Gemini 추가 (공식 문서로 recurring 무료 확인) | Research.md 2026-07-09 | 완료 |
+| F2 | `registry.merge_discovered`: discovery로 찾은 모델 id가 `:free` 접미사면 provider의 free 플래그와 무관하게 price=(0,0) (OpenRouter 컨벤션, 하드코딩 목록 대신 규칙화) | Research.md 2026-07-09 | 완료 |
+| F3 | Zhipu(z.ai) 직접 API 프로바이더 추가 — 프로바이더 전체는 유료 혼재라 `free: false`(discovery 모델은 price 미상으로 안전 취급). forge.yaml에는 넣지 않음(README 철학 "Adding a provider is just an API key" 유지) — 특정 무료 모델을 확정 취급하고 싶으면 사용자가 직접 `models:` 오버라이드를 추가하도록 README에 예시만 안내 | Research.md 2026-07-09 (GLM-4.5-Flash는 이미 EOL 확인, 예시에서 GLM-4.7-Flash만 사용) | 완료 |
+| F4 | .env.example / README "자동 인식" 목록 갱신, forge.yaml 주석에 출처+확인일 남기기 | — | 완료 |
+| F5 | 카탈로그 확장 회귀 테스트 (`test_settings.py`, `test_registry.py`) | — | 완료 |
+
+완료 기준: 신규 프로바이더가 `forge doctor`/`forge models`에 인식되고, `allow_paid: false`
+정책에서 확인된 무료 모델만 통과, 전체 테스트 통과.
+
+> **무료 프로바이더 확장 완료** (2026-07-09): 전체 220건 테스트 통과(신규 4건 포함).
+> 잔여: 사용자가 실키로 Cerebras/SambaNova/Gemini/Zhipu 연동 검증 (사용자 환경).
+
+주의: `free` 플래그는 "결제수단 미연결 시 기본 경로"를 뜻함(기존 NVIDIA 항목과 동일 관례) —
+사용자가 나중에 결제수단을 연결하면 실제로는 과금될 수 있다는 점은 README/주석에 명시.
+
 > **M2.5 완료** (2026-07-09): 전체 153건 테스트 3회 연속 통과, editable install + `forge` CLI 동작.
 > **다음: 사용자 통합 검증** — 실키(NVIDIA)로 `forge doctor`/`forge start` + Cline(OpenAI) +
 > Claude Code(`ANTHROPIC_BASE_URL`) 실연동. 검증 후 M3(Dashboard, Prometheus, PostgreSQL) 착수.

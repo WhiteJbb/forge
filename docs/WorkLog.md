@@ -4,6 +4,73 @@
 
 ---
 
+## 2026-07-09 — 무료 프로바이더 카탈로그 확장 (feat/free-provider-catalog)
+
+### 배경
+
+사용자가 "무료로 쓸 수 있는 API들 싹 긁어서 넣을 수 있게 하는게 좋지 않을까"라고
+제안. 자동 발굴/다중계정 가입(대부분 프로바이더 ToS의 "1인 1계정" 조항 위반 소지, 이미
+Plan.md 로드맵의 "multi-API-key rotation" 항목도 같은 리스크)과 "공식 문서로 확인된
+무료 프로바이더만 큐레이션해서 추가" 두 방향을 제시했고, 사용자가 후자를 선택.
+
+### 한 일
+
+1. **웹 리서치로 사실 검증** — Cerebras/SambaNova/Gemini/Zhipu(z.ai)/OpenRouter 5개를
+   병렬 서브에이전트로 공식 문서 기준 조사. 판단 기준은 "가입 시 1회 지급되는 소진형
+   크레딧"이 아니라 "사용량과 무관하게 반복 리셋되는 rate-limit 티어"인지 — 이 기준이
+   없으면 NVIDIA처럼 실제로는 트라이얼 크레딧인 걸 "무료"로 잘못 표시하는 실수를
+   반복하게 됨. 결과는 [Research.md](Research.md) 2026-07-09 항목에 출처와 함께 기록.
+2. **PROVIDER_CATALOG 확장** (`forge_gateway/settings.py`) — Cerebras/SambaNova/Gemini는
+   `free: true`(recurring 확인됨), Zhipu(`zai`)는 무료·유료 모델이 같은 키에 혼재하므로
+   `free: false`로 등록(모델 단위 오버라이드는 사용자가 필요시 직접 추가하도록 안내).
+3. **`registry.merge_discovered` 개선** — discovery로 찾은 모델 id가 OpenRouter
+   컨벤션인 `:free` 접미사면, provider 전체의 free 플래그와 무관하게 price=(0,0) 처리.
+   이전에는 provider가 free가 아니면 무조건 price 미상 취급이라, OpenRouter의 실제
+   무료 모델이 `allow_paid: false` 정책에서 보수적으로 제외되는 문제가 있었음 — 하드코딩
+   목록이 아니라 규칙으로 처리해 OpenRouter 카탈로그 변경에도 자동으로 맞음.
+4. `.env.example`, README(자동 인식 프로바이더 목록, 무료 티어 설명) 갱신.
+5. 회귀 테스트 4건 추가(`test_settings.py` 2건, `test_registry.py` 2건) — 신규
+   카탈로그 항목 등록 확인, `:free` 접미사 가격 처리, 비-free 프로바이더의 일반 모델은
+   여전히 가격 미상 처리되는지.
+
+### 오류/수정
+
+- 로컬 환경에 `prometheus_client`가 설치돼 있지 않아 `test_prom`/`test_simulator_scenarios`
+  2개 모듈이 import 실패 — pyproject.toml에는 선언돼 있었으나 editable install 시점
+  이후 추가된 의존성이 재설치 없이는 안 잡혀 있었던 것. `pip install -e .` 재실행으로
+  해결(코드 변경 아님, 환경 문제). 전체 220건 테스트 통과(신규 4건 포함) 확인.
+
+### 설계 결정
+
+- **모델 단위 무료 판정이 필요한 프로바이더(OpenRouter)는 규칙(`:free` 접미사 감지)으로,
+  프로바이더 단위로 충분한 경우(Cerebras/SambaNova/Gemini)는 카탈로그의 `free` 플래그로**
+  — 두 메커니즘을 혼용하지 않고 프로바이더의 실제 과금 구조에 맞춰 선택. Zhipu처럼 혼재
+  구조인데 공식적으로 구분 가능한 접미사가 없는 경우는 안전한 쪽(가격 미상 → 보수적 제외)을
+  기본값으로 두고, forge.yaml에 기본 반영하지 않음(README 철학 "Adding a provider is just
+  an API key" 유지 — 아무도 안 쓰는 provider 설정이 기본 파일에 끼어들지 않게).
+- `free` 플래그의 의미를 "결제수단 미연결 시 기본 경로"로 명확히 함(기존 NVIDIA 관례와
+  통일) — 사용자가 나중에 카드를 연결하면 과금 전환될 수 있다는 점을 README/주석에 명시.
+
+### 남은 문제 및 다음 할 일
+
+- [ ] 사용자가 실키(Cerebras/SambaNova/Gemini/Zhipu)로 `forge doctor`/`forge start` 실연동 검증
+- [ ] SambaNova/Zhipu의 API 키 env var명(`SAMBANOVA_API_KEY`/`ZAI_API_KEY`)이 서드파티
+      관례일 뿐 공식 문서에 미명시 — 추후 공식 확정되면 재확인
+- [ ] Gemini 정확한 RPM/RPD 수치가 공식 문서에서 대시보드로 위임돼 실측 필요(M2-18과 동일 성격)
+
+### 블로그/포트폴리오 소재
+
+- "무료 티어 vs 트라이얼 크레딧 구분하기 — LLM 게이트웨이에 프로바이더를 추가할 때
+  놓치기 쉬운 함정"과, `:free` 접미사 하드코딩 대신 규칙화한 이유.
+
+### Learning Recovery
+
+- AI가 주도: 5개 프로바이더 공식 문서 병렬 조사, 설계(모델 단위 vs 프로바이더 단위 free
+  판정 분리), 테스트 작성.
+- 다음에 직접 설명해보면 좋을 질문: (1) `registry.merge_discovered`에서 `:free` 접미사
+  판정이 `pconf.free`보다 먼저/나중에 적용돼도 결과가 같은 이유, (2) SambaNova의
+  "1회성 $5 크레딧"과 "결제수단 미연결 시 Free Tier"가 왜 서로 다른 개념인지.
+
 ## 2026-07-09 — M3 플랫폼화 (feat/m3-platform)
 
 ### 한 일

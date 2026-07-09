@@ -271,6 +271,24 @@ PROVIDER_CATALOG: "list[dict]" = [
      "api_base": "https://api.deepseek.com/v1"},
     {"name": "openai", "key_env": "OPENAI_API_KEY",
      "api_base": "https://api.openai.com/v1"},
+    # 아래 3개는 "결제수단 미연결 시 기본 경로"가 recurring 무료 티어임을 공식 문서로
+    # 확인함 (docs/Research.md 2026-07-09 조사). 카드 연결 시 실제로는 유료로 전환될 수
+    # 있으니 free 플래그를 NVIDIA와 같은 관례로 사용 — "확인된 기본 경로"이지 "영구 보장"은
+    # 아니다.
+    {"name": "cerebras", "key_env": "CEREBRAS_API_KEY",
+     "api_base": "https://api.cerebras.ai/v1",
+     "free": True, "rpm": 5},  # 공식: RPM 5 / TPM 30K / TPD 1M (Free Trial 티어)
+    {"name": "sambanova", "key_env": "SAMBANOVA_API_KEY",
+     "api_base": "https://api.sambanova.ai/v1",
+     "free": True, "rpm": 20},  # 공식: 결제수단 미연결 시 RPM 20 / RPD 20 / TPD 200K
+    {"name": "gemini", "key_env": "GEMINI_API_KEY",
+     "api_base": "https://generativelanguage.googleapis.com/v1beta/openai/",
+     "free": True},  # 공식: RPD 매일 리셋(recurring) — 정확한 RPM/RPD 수치는 비공개
+    # Zhipu/Z.ai는 무료·유료 모델이 같은 키/엔드포인트에 혼재 — 프로바이더 전체를
+    # free로 표시하면 유료 모델까지 (0,0)으로 오분류되므로 free: false로 두고, 공식
+    # 문서로 "무료 모델"이라 확인된 항목만 forge.yaml의 models: 오버라이드로 개별 지정.
+    {"name": "zai", "key_env": "ZAI_API_KEY",
+     "api_base": "https://api.z.ai/api/paas/v4/"},
     {"name": "anthropic", "key_env": "ANTHROPIC_API_KEY",
      "litellm_prefix": "anthropic", "discovery": False,
      # OpenAI 호환 /models가 없어 discovery 불가 — 대표 모델을 카탈로그가 공급

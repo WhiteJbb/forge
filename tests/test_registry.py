@@ -94,6 +94,19 @@ class RegistryMergeDiscoveredTests(unittest.TestCase):
         entry = registry.get("nvidia:brand-new-model")
         self.assertEqual(entry.price_per_mtok, (0.0, 0.0))
 
+    def test_discovered_free_suffix_gets_zero_price_even_on_paid_provider(self):
+        """OpenRouter 컨벤션 — provider.free=False라도 ':free' 모델은 과금 없음(§Research 2026-07-09)"""
+        registry = Registry(_config())
+        registry.merge_discovered("paid", ["some-org/some-model:free"])
+        entry = registry.get("paid:some-org/some-model:free")
+        self.assertEqual(entry.price_per_mtok, (0.0, 0.0))
+
+    def test_discovered_paid_provider_non_free_model_price_unknown(self):
+        registry = Registry(_config())
+        registry.merge_discovered("paid", ["some-org/some-model"])
+        entry = registry.get("paid:some-org/some-model")
+        self.assertIsNone(entry.price_per_mtok)
+
 
 class ResolveClientModelTests(unittest.TestCase):
     def setUp(self):
