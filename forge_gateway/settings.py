@@ -327,6 +327,28 @@ def load_dotenv(path: str | Path = ".env") -> int:
     return loaded
 
 
+def _apply_local_overlay(config: "ForgeConfig", local_path: Path) -> None:
+    """forge.local.yaml 오버레이 — `forge guard` 등 CLI가 관리하는 기계 전용 파일.
+
+    손으로 쓴 forge.yaml의 주석을 보존하기 위해 CLI는 이 파일만 다시 쓴다.
+    현재 지원: policies (config.policies 앞에 삽입 — 로컬 정책이 first-match에서
+    먼저 평가되고, constraints는 어차피 누적 적용된다 §5.4).
+    """
+    if not local_path.exists():
+        return
+    try:
+        raw = yaml.safe_load(local_path.read_text(encoding="utf-8")) or {}
+    except yaml.YAMLError as e:
+        raise ConfigError(f"invalid YAML in {local_path}: {e}") from e
+    if not isinstance(raw, dict):
+        raise ConfigError(f"{local_path} must contain a mapping at top level")
+    try:
+        local_policies = [PolicyRule(**p) for p in (raw.get("policies") or [])]
+    except Exception as e:
+        raise ConfigError(f"invalid policies in {local_path}: {e}") from e
+    config.policies = local_policies + config.policies
+
+
 def load_config(path: str | Path = "forge.yaml") -> ForgeConfig:
     """forge.yaml을 읽고 검증한다. 실패 시 명확한 메시지와 함께 ConfigError.
 
@@ -350,6 +372,8 @@ def load_config(path: str | Path = "forge.yaml") -> ForgeConfig:
         config = ForgeConfig(**raw)
     except Exception as e:
         raise ConfigError(f"invalid config in {path}: {e}") from e
+
+    _apply_local_overlay(config, path.resolve().parent / "forge.local.yaml")
 
     added = apply_auto_providers(config)
     if added:

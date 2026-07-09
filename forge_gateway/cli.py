@@ -10,6 +10,8 @@ import sys
 from pathlib import Path
 from typing import Optional
 
+import yaml
+
 from .core.registry import Registry
 from .providers.base import make_provider
 from .settings import (
@@ -19,6 +21,8 @@ from .settings import (
     VALID_TIERS,
     load_config,
 )
+
+_LOCAL_GUARD_NAME = "local-guard"
 
 # ---------------------------------------------------------------------------
 # init — 감지할 provider 후보 (우선순위 순). 값은 DESIGN.md §8.1 명세 그대로.
@@ -92,7 +96,11 @@ def _generate_yaml() -> tuple[str, list[str], bool]:
         "defaults:\n"
         "  capability: 7\n"
         "  tier: tier3\n"
-        "  features: [tools, streaming]\n"
+        "  features: [tools, streaming]\n\n"
+        "# 지출 제한 (유료 프로바이더 사용 시 권장) — 또는: forge guard --no-paid\n"
+        "# policies:\n"
+        "#   - name: spending-guard\n"
+        "#     constraints: { allow_paid: false }\n"
     )
     return yaml_text, [t["name"] for t in detected], no_keys
 
@@ -121,6 +129,7 @@ def cmd_init(args: argparse.Namespace) -> int:
     else:
         print(f"Wrote {target} with provider(s): {', '.join(detected)}")
     print("Config validated OK.")
+    print("Spend guard: forge guard --no-paid")
     return 0
 
 
@@ -270,14 +279,282 @@ def cmd_start(args: argparse.Namespace) -> int:
         print(f"forge: {e}", file=sys.stderr)
         return 1
 
-    from .server import create_app  # 지연 import — 다른 커맨드는 서버 스택을 물지 않게
+    from .server import create_app, print_banner  # 지연 import — 다른 커맨드는 서버 스택을 물지 않게
 
     app = create_app(args.config)
     config = app.state.forge_config
 
     import uvicorn
 
+    print_banner(config)
     uvicorn.run(app, host=config.server.host, port=config.server.port)
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# reload — 실행 중인 서버에 POST /admin/reload
+# ---------------------------------------------------------------------------
+
+
+def _call_reload(config) -> tuple[bool, dict]:
+    """POST /admin/reload를 호출한다. 예외는 절대 던지지 않는다.
+
+    반환: (성공 여부, 페이로드). 성공 시 페이로드는 응답 JSON.
+    실패 시 페이로드는 {"url": ..., "error": "connect" | "<상세 메시지>"}.
+    """
+    import httpx
+
+    url = f"http://{config.server.host}:{config.server.port}/admin/reload"
+    try:
+        resp = httpx.post(url, timeout=60)
+    except httpx.HTTPError:
+        return False, {"url": url, "error": "connect"}
+    if resp.status_code != 200:
+        return False, {"url": url, "error": f"HTTP {resp.status_code}: {resp.text}"}
+    try:
+        return True, resp.json()
+    except ValueError as e:
+        return False, {"url": url, "error": f"invalid response: {e}"}
+
+
+def _print_reload_summary(data: dict) -> None:
+    providers = data.get("providers") or []
+    provider_note = f" ({', '.join(providers)})" if providers else ""
+    print(f"Reloaded: {data.get('models', '?')} model(s), {len(providers)} provider(s){provider_note}")
+    discovered = {k: v for k, v in (data.get("discovered") or {}).items() if v}
+    if discovered:
+        print("Discovered: " + ", ".join(f"{k}={v}" for k, v in discovered.items()))
+    note = data.get("note")
+    if note:
+        print(note)
+
+
+def cmd_reload(args: argparse.Namespace) -> int:
+    try:
+        config = load_config(args.config)
+    except ConfigError as e:
+        print(f"forge: {e}", file=sys.stderr)
+        return 1
+
+    ok, payload = _call_reload(config)
+    if not ok:
+        if payload["error"] == "connect":
+            print(
+                f"forge: server not running at {payload['url']} - changes apply on next start",
+                file=sys.stderr,
+            )
+        else:
+            print(f"forge: reload failed - {payload['error']}", file=sys.stderr)
+        return 1
+
+    _print_reload_summary(payload)
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# guard — forge.local.yaml (기계 전용, 주석 없음)로 지출 가드 관리
+# ---------------------------------------------------------------------------
+
+
+def _local_config_path(config_path: str) -> Path:
+    return Path(config_path).resolve().parent / "forge.local.yaml"
+
+
+def _read_local_yaml(path: Path) -> dict:
+    if not path.exists():
+        return {}
+    try:
+        raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except yaml.YAMLError as e:
+        raise ConfigError(f"invalid YAML in {path}: {e}") from e
+    if not isinstance(raw, dict):
+        raise ConfigError(f"{path} must contain a mapping at top level")
+    return raw
+
+
+def _find_policy(policies: list, name: str) -> Optional[dict]:
+    for p in policies:
+        if isinstance(p, dict) and p.get("name") == name:
+            return p
+    return None
+
+
+def _constraints_line(constraints: dict) -> str:
+    parts = []
+    if "allow_paid" in constraints:
+        parts.append(f"allow_paid={constraints['allow_paid']}")
+    if "max_cost_per_request" in constraints:
+        parts.append(f"max_cost_per_request={constraints['max_cost_per_request']}")
+    if constraints.get("exclude_providers"):
+        parts.append(f"exclude_providers={constraints['exclude_providers']}")
+    return ", ".join(parts) if parts else "(no constraints set)"
+
+
+def _print_guard_status(local_path: Path, guard: Optional[dict]) -> None:
+    if guard is None:
+        print("no local guard set")
+        print("Usage: forge guard --no-paid | --allow-paid | --max-cost USD | --off")
+        return
+    print(f"Local guard active ({local_path}):")
+    print("  " + _constraints_line(dict(guard.get("constraints") or {})))
+
+
+def cmd_guard(args: argparse.Namespace) -> int:
+    local_path = _local_config_path(args.config)
+
+    try:
+        data = _read_local_yaml(local_path)
+    except ConfigError as e:
+        print(f"forge: {e}", file=sys.stderr)
+        return 1
+
+    policies = list(data.get("policies") or [])
+    guard = _find_policy(policies, _LOCAL_GUARD_NAME)
+
+    any_flag = args.no_paid or args.allow_paid or (args.max_cost is not None) or args.off
+    if not any_flag:
+        _print_guard_status(local_path, guard)
+        return 0
+
+    removed = False
+    new_guard = None
+    if args.off:
+        policies = [p for p in policies if not (isinstance(p, dict) and p.get("name") == _LOCAL_GUARD_NAME)]
+        removed = True
+    else:
+        constraints = dict(guard.get("constraints") or {}) if guard else {}
+        if args.no_paid:
+            constraints["allow_paid"] = False
+        if args.allow_paid:
+            constraints.pop("allow_paid", None)
+        if args.max_cost is not None:
+            constraints["max_cost_per_request"] = args.max_cost
+
+        if not constraints:
+            if guard is None:
+                # Nothing existed and nothing effective was set (e.g. --allow-paid alone).
+                print(
+                    "forge: no guard changes given (use --no-paid/--allow-paid/--max-cost)",
+                    file=sys.stderr,
+                )
+                return 1
+            # The last remaining constraint was just cleared — the guard is now
+            # vacuous, so drop it rather than write a no-op policy.
+            policies = [p for p in policies if not (isinstance(p, dict) and p.get("name") == _LOCAL_GUARD_NAME)]
+            removed = True
+        else:
+            new_guard = {"name": _LOCAL_GUARD_NAME, "constraints": constraints}
+            if guard is not None:
+                policies[policies.index(guard)] = new_guard
+            else:
+                policies.insert(0, new_guard)
+
+    existed_before = local_path.exists()
+    original_bytes = local_path.read_bytes() if existed_before else None
+
+    new_data = dict(data)
+    if policies:
+        new_data["policies"] = policies
+    else:
+        new_data.pop("policies", None)
+
+    if not new_data:
+        if local_path.exists():
+            local_path.unlink()
+    else:
+        local_path.write_text(yaml.safe_dump(new_data, sort_keys=False), encoding="utf-8")
+
+    try:
+        validated_config = load_config(args.config)
+    except ConfigError as e:
+        # 롤백 — 검증 실패한 상태로 두지 않는다 (§5.9와 동일한 원칙)
+        if existed_before:
+            local_path.write_bytes(original_bytes)
+        elif local_path.exists():
+            local_path.unlink()
+        print(f"forge: guard update failed validation, rolled back - {e}", file=sys.stderr)
+        return 1
+
+    if removed:
+        print("Spend guard removed.")
+    else:
+        print("Spend guard updated:")
+        print("  " + _constraints_line(new_guard["constraints"]))
+
+    ok, payload = _call_reload(validated_config)
+    if ok:
+        print("Applied to the running server.")
+    elif payload["error"] == "connect":
+        print(f"Server not running at {payload['url']} - applies on next start.")
+    else:
+        print(f"Could not reload running server ({payload['error']}) - applies on next start.")
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# policies — 유효 정책을 평가 순서대로 출력
+# ---------------------------------------------------------------------------
+
+
+def _when_summary(when) -> str:
+    if when is None:
+        return "always"
+    parts = []
+    if when.task:
+        parts.append(f"task={','.join(when.task)}")
+    if when.model:
+        parts.append(f"model={when.model}")
+    if when.client:
+        parts.append(f"client={when.client}")
+    if when.min_prompt_tokens is not None:
+        parts.append(f"min_tokens={when.min_prompt_tokens}")
+    if when.max_prompt_tokens is not None:
+        parts.append(f"max_tokens={when.max_prompt_tokens}")
+    return ", ".join(parts) if parts else "always"
+
+
+def _route_summary(route) -> str:
+    if route is None or not route.prefer:
+        return "-"
+    return f"{len(route.prefer)} item(s), first={route.prefer[0]!r}"
+
+
+def _policy_constraints_summary(constraints) -> str:
+    if constraints is None:
+        return "-"
+    parts = []
+    if constraints.allow_paid is not None:
+        parts.append(f"allow_paid={constraints.allow_paid}")
+    if constraints.max_cost_per_request is not None:
+        parts.append(f"max_cost={constraints.max_cost_per_request}")
+    if constraints.exclude_providers:
+        parts.append(f"exclude={','.join(constraints.exclude_providers)}")
+    return ", ".join(parts) if parts else "-"
+
+
+def cmd_policies(args: argparse.Namespace) -> int:
+    try:
+        config = load_config(args.config)
+    except ConfigError as e:
+        print(f"forge: {e}", file=sys.stderr)
+        return 1
+
+    if not config.policies:
+        print("No policies configured.")
+        return 0
+
+    header = "{:<20} {:<32} {:<26} {}".format("NAME", "WHEN", "ROUTE", "CONSTRAINTS")
+    print(header)
+    print("-" * len(header))
+    for rule in config.policies:
+        print(
+            "{:<20} {:<32} {:<26} {}".format(
+                rule.name,
+                _when_summary(rule.when),
+                _route_summary(rule.route),
+                _policy_constraints_summary(rule.constraints),
+            )
+        )
     return 0
 
 
@@ -309,6 +586,29 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_models.add_argument("--tier", choices=VALID_TIERS, help="Filter by tier")
 
+    sub.add_parser(
+        "reload", parents=[common], help="Hot-reload the running server's config (POST /admin/reload)"
+    )
+
+    p_guard = sub.add_parser(
+        "guard", parents=[common], help="Manage the local spend guard (forge.local.yaml)"
+    )
+    guard_paid = p_guard.add_mutually_exclusive_group()
+    guard_paid.add_argument(
+        "--no-paid", action="store_true", help="Block paid (non-free) models"
+    )
+    guard_paid.add_argument(
+        "--allow-paid", action="store_true", help="Remove the allow_paid restriction"
+    )
+    p_guard.add_argument(
+        "--max-cost", type=float, metavar="USD", help="Set max_cost_per_request (USD)"
+    )
+    p_guard.add_argument("--off", action="store_true", help="Remove the local spend guard")
+
+    sub.add_parser(
+        "policies", parents=[common], help="List effective policies in evaluation order"
+    )
+
     return parser
 
 
@@ -317,6 +617,9 @@ _COMMANDS = {
     "init": cmd_init,
     "doctor": cmd_doctor,
     "models": cmd_models,
+    "reload": cmd_reload,
+    "guard": cmd_guard,
+    "policies": cmd_policies,
 }
 
 

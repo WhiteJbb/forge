@@ -107,6 +107,10 @@ class MetricsEngine:
         """CapabilityTuner 입력 (§5.11) — repo 집계 위임"""
         return await asyncio.to_thread(self._repo.capability_stats, days)
 
+    async def recent_requests(self, limit: int = 50) -> "list[dict]":
+        """최근 요청 피드 — 대시보드용. 큐에 남은 미기록분은 최대 1초 지연될 수 있음."""
+        return await asyncio.to_thread(self._repo.recent_requests, limit)
+
     # ------------------------------------------------------------- internal
 
     async def _flush_loop(self) -> None:

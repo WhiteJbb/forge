@@ -158,6 +158,42 @@ class DotenvTests(unittest.TestCase):
             self.assertEqual(os.environ.get("FORGE_T5"), "via_load_config")
 
 
+class LocalOverlayTests(unittest.TestCase):
+    """forge.local.yaml 오버레이 — CLI(forge guard)가 관리하는 기계 전용 파일"""
+
+    def setUp(self):
+        self._tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmpdir.cleanup)
+        self.root = Path(self._tmpdir.name)
+        (self.root / "forge.yaml").write_text(VALID_YAML, encoding="utf-8")
+        env_patch = patch.dict(os.environ, {}, clear=False)
+        env_patch.start()
+        self.addCleanup(env_patch.stop)
+        for item in PROVIDER_CATALOG:
+            os.environ.pop(item["key_env"], None)
+
+    def test_local_policies_prepended(self):
+        (self.root / "forge.local.yaml").write_text(
+            "policies:\n"
+            "  - name: local-guard\n"
+            "    constraints: { allow_paid: false }\n",
+            encoding="utf-8",
+        )
+        config = load_config(self.root / "forge.yaml")
+        self.assertEqual(config.policies[0].name, "local-guard")
+        self.assertFalse(config.policies[0].constraints.allow_paid)
+
+    def test_missing_local_file_is_fine(self):
+        config = load_config(self.root / "forge.yaml")
+        self.assertEqual(config.policies, [])
+
+    def test_invalid_local_file_raises(self):
+        (self.root / "forge.local.yaml").write_text(
+            "policies:\n  - name: broken\n", encoding="utf-8")  # route/constraints 없음
+        with self.assertRaises(ConfigError):
+            load_config(self.root / "forge.yaml")
+
+
 class AutoProviderTests(unittest.TestCase):
     """카탈로그 기반 provider 자동 등록 (§8.1 — 키만 .env에 넣으면 끝)"""
 

@@ -39,11 +39,13 @@
 
 | # | 작업 | 담당 | 상태 |
 | --- | --- | --- | --- |
-| U1 | `forge reload` CLI | Sonnet 위임 | 진행중 |
-| U2 | `forge start` 시작 배너 (대시보드/클라이언트 연결 안내) | 직접 | 진행중 |
-| U3 | 지출 가드 온보딩 — init 템플릿 주석 + 유료 자동등록 경고 로그 | 직접+Sonnet | 진행중 |
-| U4 | 최근 요청 피드 — `/v1/stats/recent` + 대시보드 섹션 + explain 실행기 | 직접+Sonnet 위임 | 진행중 |
-| U5 | **정책 간편 수정** — `forge.local.yaml` 오버레이 + `forge guard` CLI (자동 reload) | 직접+Sonnet | 진행중 |
+| U1 | `forge reload` CLI | Sonnet 위임 | 완료 |
+| U2 | `forge start` 시작 배너 (대시보드/클라이언트 연결 안내) | 직접 | 완료 |
+| U3 | 지출 가드 온보딩 — init 템플릿 주석 + 유료 자동등록 경고 로그 | 직접+Sonnet | 완료 |
+| U4 | 최근 요청 피드 — `/v1/stats/recent` + 대시보드 섹션 + explain 실행기 | 직접+Sonnet 위임 | 완료 |
+| U5 | **정책 간편 수정** — `forge.local.yaml` 오버레이 + `forge guard` CLI (자동 reload) | 직접+Sonnet | 완료 |
+
+> UX 스프린트 완료 (2026-07-09): 테스트 210건 + 스모크 통과.
 
 > **M2.5 완료** (2026-07-09): 전체 153건 테스트 3회 연속 통과, editable install + `forge` CLI 동작.
 > **다음: 사용자 통합 검증** — 실키(NVIDIA)로 `forge doctor`/`forge start` + Cline(OpenAI) +

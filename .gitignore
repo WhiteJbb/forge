@@ -10,6 +10,7 @@ venv/
 # Local data
 forge.db
 forge.db-journal
+forge.local.yaml
 
 # Build
 dist/

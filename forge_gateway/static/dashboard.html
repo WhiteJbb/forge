@@ -372,6 +372,104 @@
 
   .loading { color: var(--muted); font-size: 13px; padding: var(--sp-4); }
 
+  /* ===== Recent requests ===== */
+  .recent-card { padding: var(--sp-2) var(--sp-3); overflow-x: auto; }
+  td.attempt-retry { color: var(--warning); font-weight: 700; }
+  .ok-text { color: var(--good); }
+  .err-text { color: var(--critical); }
+  .cancelled-text { color: var(--unknown); }
+
+  /* ===== Route Explain ===== */
+  .explain-form {
+    display: flex;
+    flex-direction: column;
+    gap: var(--sp-3);
+    padding: var(--sp-4);
+  }
+  .explain-form textarea {
+    width: 100%;
+    min-height: 84px;
+    resize: vertical;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-s);
+    color: var(--text-1);
+    font: inherit;
+    font-family: var(--mono);
+    font-size: 12px;
+    padding: var(--sp-2) var(--sp-3);
+  }
+  .explain-form textarea:focus { outline: 1px solid var(--series-req); }
+  .explain-row {
+    display: flex;
+    align-items: center;
+    gap: var(--sp-3);
+  }
+  .explain-form select {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-s);
+    color: var(--text-2);
+    font: inherit;
+    font-size: 12px;
+    padding: var(--sp-2) var(--sp-3);
+  }
+  .explain-form button {
+    background: var(--series-req);
+    color: #fff;
+    border: none;
+    border-radius: var(--radius-s);
+    padding: var(--sp-2) var(--sp-4);
+    font: inherit;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .explain-form button:hover:not(:disabled) { filter: brightness(1.1); }
+  .explain-form button:disabled { opacity: 0.55; cursor: default; }
+
+  .explain-result { margin-top: var(--sp-2); }
+  .explain-summary { font-size: 12px; color: var(--text-2); margin-bottom: var(--sp-3); }
+  .explain-summary b { color: var(--text-1); }
+  .would-select {
+    background: var(--surface-2);
+    border: 1px solid var(--series-req);
+    border-radius: var(--radius);
+    padding: var(--sp-4);
+    margin-bottom: var(--sp-4);
+  }
+  .would-select .ws-label {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+    color: var(--muted);
+    margin-bottom: var(--sp-1);
+  }
+  .would-select .ws-model {
+    font-family: var(--mono);
+    font-size: 20px;
+    font-weight: 650;
+    color: var(--text-1);
+  }
+  .would-select .ws-meta { margin-top: var(--sp-1); font-size: 12px; color: var(--text-2); }
+  .explain-error {
+    background: rgba(208, 59, 59, 0.14);
+    border: 1px solid var(--critical);
+    color: #f4c6c6;
+    padding: var(--sp-3) var(--sp-4);
+    border-radius: var(--radius);
+    font-size: 13px;
+  }
+  .group-block { margin-bottom: var(--sp-3); }
+  .group-block h4 {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--muted);
+    margin: 0 0 var(--sp-1);
+  }
+  tr.excluded td { color: var(--muted); font-style: italic; }
+
   @media (max-width: 900px) {
     .tiles { grid-template-columns: repeat(2, 1fr); }
     .tier-grid { grid-template-columns: 1fr; }
@@ -443,6 +541,42 @@
     </div>
   </section>
 
+  <!-- 7. Recent requests -->
+  <section>
+    <div class="sec-head"><h2>Recent Requests</h2><span class="note">last 30, live</span></div>
+    <div class="card recent-card">
+      <table>
+        <thead><tr>
+          <th class="l">Time</th><th class="l">Model</th><th class="l">Task</th>
+          <th>Attempt</th><th class="l">Status</th><th>Latency</th><th>Cost</th>
+        </tr></thead>
+        <tbody id="recentBody">
+          <tr class="empty-row"><td colspan="7">Loading&hellip;</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- 8. Route explain -->
+  <section>
+    <div class="sec-head"><h2>Route Explain</h2><span class="note">dry-run, no upstream call</span></div>
+    <div class="card explain-form">
+      <textarea id="explainPrompt" placeholder="&#xB9AC;&#xD329;&#xD1A0;&#xB9C1;&#xD574;&#xC918; &hellip;"></textarea>
+      <div class="explain-row">
+        <select id="explainTask">
+          <option value="auto">auto</option>
+          <option value="coding">coding</option>
+          <option value="debug">debug</option>
+          <option value="refactor">refactor</option>
+          <option value="documentation">documentation</option>
+          <option value="testing">testing</option>
+        </select>
+        <button id="explainRun" type="button">Run</button>
+      </div>
+      <div id="explainResult" class="explain-result"></div>
+    </div>
+  </section>
+
 </div>
 
 <script>
@@ -456,8 +590,9 @@
  * All rendering is driven from these two payloads only.
  * ============================================================ */
 
-const DASH_INTERVAL  = 3000;
-const STATS_INTERVAL = 30000;
+const DASH_INTERVAL   = 3000;
+const STATS_INTERVAL  = 30000;
+const RECENT_INTERVAL = 5000;
 
 // Last successful payloads + the wall-clock time they arrived,
 // so cooldown countdowns can tick down between polls.
@@ -499,6 +634,12 @@ function fmtLatency(ms) {
   if (!ms || ms <= 0) return "&mdash;";
   if (ms >= 1000) return (ms / 1000).toFixed(2) + "s";
   return Math.round(ms) + "ms";
+}
+
+// Cost cell for the recent-requests feed: 0/absent renders as a dash, not $0.00.
+function fmtCostDash(n) {
+  if (!n) return '<span class="dim">&mdash;</span>';
+  return n < 0.01 ? "$" + n.toFixed(4) : "$" + n.toFixed(2);
 }
 
 function fmtPct(x, digits) {
@@ -561,6 +702,17 @@ async function fetchStats() {
     renderChart();
   } catch (e) {
     // /dashboard poll owns the connection banner; a stats miss is non-fatal.
+  }
+}
+
+async function fetchRecent() {
+  try {
+    const r = await fetch("/v1/stats/recent?limit=30", { cache: "no-store" });
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    const data = await r.json();
+    renderRecent(data.requests || []);
+  } catch (e) {
+    // independent feed; /dashboard poll owns the connection banner.
   }
 }
 
@@ -760,6 +912,182 @@ function renderPolicies(d) {
     '<span class="badge">' + esc(p) + '</span>').join("");
 }
 
+/* ---------- rendering: recent requests feed ---------- */
+
+// Row timestamps come as ISO-8601 (UTC) from the server; render in local time.
+function localHms(ts) {
+  const d = new Date(ts);
+  if (isNaN(d.getTime())) return "&mdash;";
+  const hh = String(d.getHours()).padStart(2, "0");
+  const mm = String(d.getMinutes()).padStart(2, "0");
+  const ss = String(d.getSeconds()).padStart(2, "0");
+  return hh + ":" + mm + ":" + ss;
+}
+
+function recentStatusCell(row) {
+  if (row.success) return '<span class="ok-text">ok</span>';
+  if (row.error_type === "cancelled") return '<span class="cancelled-text">cancelled</span>';
+  return '<span class="err-text">' + esc(row.error_type || "error") + '</span>';
+}
+
+// TTFT (stream time-to-first-token) is the more meaningful "did it feel slow"
+// number when present; fall back to total latency for non-streamed requests.
+function recentLatencyCell(row) {
+  if (row.ttft_ms) return "TTFT " + fmtLatency(row.ttft_ms);
+  return fmtLatency(row.latency_ms);
+}
+
+function recentRow(row) {
+  const isRetry = row.attempt != null && row.attempt > 1;
+  return '<tr>' +
+    '<td class="l">' + localHms(row.timestamp) + '</td>' +
+    '<td class="l model" title="' + esc(row.model || "") + '">' +
+      esc(shortModel(row.model || "")) + '</td>' +
+    '<td class="l">' + (row.task_type ? esc(row.task_type) : '<span class="dim">&mdash;</span>') + '</td>' +
+    '<td' + (isRetry ? ' class="attempt-retry"' : '') + '>' +
+      (row.attempt != null ? row.attempt : '&mdash;') + '</td>' +
+    '<td class="l">' + recentStatusCell(row) + '</td>' +
+    '<td>' + recentLatencyCell(row) + '</td>' +
+    '<td>' + fmtCostDash(row.cost) + '</td>' +
+  '</tr>';
+}
+
+function renderRecent(rows) {
+  if (!rows.length) {
+    $("recentBody").innerHTML = '<tr class="empty-row"><td colspan="7">' +
+      'No requests yet &mdash; point a coding agent at this gateway.</td></tr>';
+    return;
+  }
+  $("recentBody").innerHTML = rows.map(recentRow).join("");
+}
+
+/* ---------- rendering: route explain (one-shot, not polled) ---------- */
+
+function explainSummaryLine(analysis) {
+  const a = analysis || {};
+  const bits = [
+    "task=<b>" + (a.task != null ? esc(a.task) : "&mdash;") + "</b>",
+    "confidence=<b>" + (a.confidence != null ? a.confidence : "&mdash;") + "</b>",
+    "est_tokens=<b>" + (a.est_prompt_tokens != null ? fmtInt(a.est_prompt_tokens) : "&mdash;") + "</b>",
+  ];
+  if (a.language) bits.push("lang=<b>" + esc(a.language) + "</b>");
+  return '<div class="explain-summary">' + bits.join(", ") + '</div>';
+}
+
+function explainPolicyBadge(policy) {
+  if (!policy) return "";
+  const matched = policy.matched
+    ? '<span class="badge">policy: ' + esc(policy.matched) + '</span>'
+    : '<span class="dim">no policy matched</span>';
+  const rejected = policy.rejected_by_constraints
+    ? ' <span class="dim">(' + fmtInt(policy.rejected_by_constraints) +
+      ' model(s) excluded by policy constraints)</span>'
+    : '';
+  return '<div class="badges" style="margin-bottom:var(--sp-4)">' + matched + rejected + '</div>';
+}
+
+function explainWouldSelect(ws) {
+  if (!ws) {
+    return '<div class="explain-error">No candidate would be selected.</div>';
+  }
+  return '<div class="would-select">' +
+    '<div class="ws-label">Would Select</div>' +
+    '<div class="ws-model">' + esc(ws.model) + '</div>' +
+    '<div class="ws-meta">selected_by: <b>' + esc(ws.selected_by) + '</b>' +
+      ' &middot; tier: ' + esc(ws.tier || "&mdash;") +
+      ' &middot; score: ' + (ws.score != null ? ws.score : "&mdash;") + '</div>' +
+  '</div>';
+}
+
+function explainGroups(groups) {
+  if (!groups || !groups.length) return "";
+  return groups.map((rows, i) => {
+    let body;
+    if (!rows.length) {
+      body = '<div class="dim" style="font-size:12px;padding:var(--sp-2) 0;">no candidates</div>';
+    } else {
+      body = '<table><thead><tr><th class="l">Model</th><th class="l">Score / Excluded</th></tr></thead><tbody>' +
+        rows.map((row) => {
+          const excluded = row.excluded != null;
+          return '<tr' + (excluded ? ' class="excluded"' : '') + '>' +
+            '<td class="l model">' + esc(row.model) + '</td>' +
+            '<td class="l">' + (excluded ? esc(row.excluded) : String(row.score)) + '</td>' +
+          '</tr>';
+        }).join("") +
+      '</tbody></table>';
+    }
+    return '<div class="group-block"><h4>Group ' + (i + 1) + '</h4>' + body + '</div>';
+  }).join("");
+}
+
+function renderExplain(data) {
+  const resultEl = $("explainResult");
+
+  // Direct model requests bypass routing entirely — the API returns just
+  // analysis + direct_model, no groups/would_select.
+  if (data.direct_model) {
+    const dm = data.direct_model;
+    resultEl.innerHTML =
+      explainSummaryLine(data.analysis) +
+      '<div class="would-select">' +
+        '<div class="ws-label">Direct Model (routing bypassed)</div>' +
+        '<div class="ws-model">' + esc(dm.model) + '</div>' +
+        '<div class="ws-meta">passes_constraints: ' + (dm.passes_constraints ? "yes" : "no") +
+          (dm.note ? ' &middot; ' + esc(dm.note) : '') + '</div>' +
+      '</div>';
+    return;
+  }
+
+  resultEl.innerHTML =
+    explainSummaryLine(data.analysis) +
+    explainPolicyBadge(data.policy) +
+    explainWouldSelect(data.would_select) +
+    explainGroups(data.groups);
+}
+
+async function runExplain() {
+  const btn = $("explainRun");
+  const promptEl = $("explainPrompt");
+  const taskEl = $("explainTask");
+  const resultEl = $("explainResult");
+  const text = promptEl.value.trim();
+  if (!text) {
+    resultEl.innerHTML = '<div class="explain-error">Enter a prompt first.</div>';
+    return;
+  }
+
+  const headers = { "Content-Type": "application/json" };
+  const taskVal = taskEl.value;
+  if (taskVal && taskVal !== "auto") headers["X-Forge-Task"] = taskVal;
+
+  btn.disabled = true;
+  const prevLabel = btn.textContent;
+  btn.textContent = "Running...";
+  resultEl.innerHTML = '<div class="loading">Running route/explain&hellip;</div>';
+
+  try {
+    const r = await fetch("/v1/route/explain", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ model: "auto", messages: [{ role: "user", content: text }] }),
+    });
+    const data = await r.json().catch(() => null);
+    if (!r.ok || !data) {
+      const msg = (data && (data.detail || (data.error && data.error.message))) ||
+        ("HTTP " + r.status);
+      resultEl.innerHTML = '<div class="explain-error">' + esc(msg) + '</div>';
+      return;
+    }
+    renderExplain(data);
+  } catch (e) {
+    resultEl.innerHTML = '<div class="explain-error">Request failed: ' +
+      esc(String((e && e.message) || e)) + '</div>';
+  } finally {
+    btn.disabled = false;
+    btn.textContent = prevLabel;
+  }
+}
+
 /* ---------- rendering: 7-day trend (hand-rolled SVG) ---------- */
 
 // Build an ordered day series ending at stats.today.date, aggregating the
@@ -920,11 +1248,14 @@ function tick() {
 
 /* ---------- boot ---------- */
 
-$("retryBtn").addEventListener("click", () => { fetchDashboard(); fetchStats(); });
+$("retryBtn").addEventListener("click", () => { fetchDashboard(); fetchStats(); fetchRecent(); });
+$("explainRun").addEventListener("click", runExplain);
 
 fetchDashboard();
 fetchStats();
+fetchRecent();
 setInterval(fetchDashboard, DASH_INTERVAL);
 setInterval(fetchStats, STATS_INTERVAL);
+setInterval(fetchRecent, RECENT_INTERVAL);
 setInterval(tick, 1000);
 </script>

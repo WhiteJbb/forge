@@ -17,6 +17,14 @@
 
 - 전체 185건 테스트 통과, 스모크 31항목 통과 (reload 후 exporter 생존 포함)
 
+### UX 스프린트 (사용자 워크스루 피드백, U1~U5)
+
+- `forge reload`/`forge guard --no-paid|--max-cost|--off`/`forge policies` CLI (Sonnet — 실서버 라이브 검증, cp949 콘솔 크래시 예방까지)
+- **forge.local.yaml 오버레이**: 기계 전용 파일로 지출 가드 관리 — 손으로 쓴 forge.yaml 주석 보존
+- `forge start` 배너(대시보드/클라이언트 연결 안내), 유료 자동등록 경고 로그, init 템플릿 가드 주석
+- `/v1/stats/recent` + 대시보드 최근 요청 피드(failover 강조, cancelled 회색) + Route Explain 실행기
+- 테스트 210건 + 스모크 통과 (스모크의 docs 정책 기대값은 계층화 정책으로 갱신)
+
 ### 후속 (사용자 피드백 반영)
 
 - **대시보드 밀도**: 차트를 상단으로, 유휴 discovered 모델 접기 토글 (main `61b6283`)

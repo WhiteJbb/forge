@@ -53,6 +53,10 @@ class MetricsRepository(Protocol):
         """최근 days일 집계 요약. 기존 src/metrics.py 응답 형태 유지."""
         ...
 
+    def recent_requests(self, limit: int) -> "list[dict]":
+        """최근 요청 N건 (최신순) — 대시보드 이벤트 피드용."""
+        ...
+
     def capability_stats(self, days: int) -> "list[dict]":
         """(model, task_type)별 최근 days일 집계 — 학습 루프 입력 (§5.11).
 

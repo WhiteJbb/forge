@@ -210,6 +210,18 @@ class SqliteRepo:
             "today": _build_today(today, today_rows),
         }
 
+    def recent_requests(self, limit: int) -> "list[dict]":
+        """최근 요청 N건 (최신순) — 대시보드 이벤트 피드용."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT timestamp, model, provider, tier, task_type, attempt,"
+                "       latency_ms, ttft_ms, prompt_tokens, completion_tokens,"
+                "       success, status_code, error_type, cost"
+                " FROM request_metrics ORDER BY id DESC LIMIT ?",
+                (max(1, min(int(limit), 500)),),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
     # ------------------------------------------------------------------ tuner
 
     def capability_stats(self, days: int) -> "list[dict]":

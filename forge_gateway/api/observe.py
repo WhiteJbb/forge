@@ -37,6 +37,11 @@ def build_router(deps: Deps, runtime: dict) -> APIRouter:
     async def stats(days: int = 7):
         return await deps.metrics.range_summary(days)
 
+    @router.get("/v1/stats/recent")
+    async def stats_recent(limit: int = 50):
+        """최근 요청 피드 — "방금 요청이 왜 그 모델로 갔지?"의 답 (대시보드 소비)"""
+        return {"requests": await deps.metrics.recent_requests(limit)}
+
     @router.get("/metrics")
     async def prometheus_metrics():
         """Prometheus 표준 관례 포맷 (§5.7). JSON 통계는 /v1/stats."""

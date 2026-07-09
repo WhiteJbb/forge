@@ -47,6 +47,16 @@ def create_app(config_path: str = "forge.yaml") -> FastAPI:
 
     registry = Registry(config)
     fill_registry_prices(registry, config)  # litellm 가격표 폴백 (§5.12)
+
+    # 유료 프로바이더가 키 감지로 조용히 편입되면 지출 인지 없이 과금될 수 있다 (§5.12)
+    paid_auto = [p.name for p in config.providers if p.auto_registered and not p.free]
+    if paid_auto:
+        has_guard = any(r.constraints is not None for r in config.policies)
+        logger.warning(
+            "유료 프로바이더 자동 등록됨: %s — 지출 제한이 필요하면 "
+            "`forge guard --no-paid` 또는 `forge guard --max-cost <USD>` 실행%s",
+            ", ".join(paid_auto),
+            "" if has_guard else " (현재 지출 제한 정책 없음)")
     providers = {p.name: make_provider(p, config.timeouts) for p in config.providers}
     scheduler = Scheduler(config, registry)
     analyzer = RequestAnalyzer()
@@ -220,11 +230,29 @@ def create_app(config_path: str = "forge.yaml") -> FastAPI:
 # 설정 없으면 SystemExit)이 테스트와 도구를 오염시킨다. 진입점은 main()/CLI(forge start).
 
 
+def print_banner(config) -> None:
+    """기동 직후 '그래서 뭘 하면 되는지'를 알려주는 안내 (U2 — CLI start와 main 공용)"""
+    base = f"http://{config.server.host}:{config.server.port}"
+    print(f"""
+  Forge is up.
+
+  Dashboard      {base}/dashboard/ui
+  Health         {base}/health
+
+  Connect a coding agent (model: "auto"):
+    Cline/Continue/Aider   base URL  {base}/v1
+    Claude Code            ANTHROPIC_BASE_URL={base}
+
+  Spend guard:   forge guard --no-paid   |   forge guard --max-cost 0.05
+""")
+
+
 def main():
     import uvicorn
 
     app = create_app()
     config = app.state.forge_config
+    print_banner(config)
     uvicorn.run(
         app,
         host=config.server.host,

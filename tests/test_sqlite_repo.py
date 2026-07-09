@@ -96,6 +96,17 @@ class SqliteRepoTests(unittest.TestCase):
         self.assertEqual(count, 5)
         repo.close()
 
+    def test_recent_requests_returns_latest_first(self):
+        repo = SqliteRepo(self.db_path)
+        self.addCleanup(repo.close)
+        repo.init_schema()
+        repo.record_batch([self._metric(request_id=f"r{i}", model=f"m{i}")
+                           for i in range(5)])
+        recent = repo.recent_requests(3)
+        self.assertEqual(len(recent), 3)
+        self.assertEqual(recent[0]["model"], "m4")  # 최신순 (id DESC)
+        self.assertIn("cost", recent[0])
+
     def test_prune_deletes_only_old_rows(self):
         repo = SqliteRepo(self.db_path)
         repo.init_schema()
