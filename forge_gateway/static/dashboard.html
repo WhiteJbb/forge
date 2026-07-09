@@ -241,6 +241,15 @@
     font-style: italic;
     padding: var(--sp-4);
   }
+  .toggle-row td {
+    text-align: left;
+    color: var(--muted);
+    font-size: 11px;
+    cursor: pointer;
+    padding: var(--sp-2) var(--sp-1);
+    user-select: none;
+  }
+  .toggle-row:hover td { color: var(--text-2); }
 
   /* status pill */
   .st {
@@ -397,11 +406,16 @@
     </div>
   </section>
 
-  <!-- 3. Tier model status boards -->
+  <!-- 3. 7-day trend -->
   <section>
-    <div class="sec-head"><h2>Model Status</h2><span class="note">by tier</span></div>
-    <div class="tier-grid" id="tiers">
-      <div class="loading">Loading&hellip;</div>
+    <div class="sec-head"><h2>7-Day Trend</h2><span class="note" id="trendNote"></span></div>
+    <div class="card chart-card">
+      <div class="legend">
+        <span class="key"><span class="swatch bar" style="background:var(--series-req)"></span>Requests</span>
+        <span class="key"><span class="swatch" style="background:var(--series-lat)"></span>Avg latency (ms)</span>
+      </div>
+      <div id="chart"><div class="loading">Loading&hellip;</div></div>
+      <div class="chart-tip" id="chartTip"></div>
     </div>
   </section>
 
@@ -413,16 +427,11 @@
     </div>
   </section>
 
-  <!-- 5. 7-day trend -->
+  <!-- 5. Tier model status boards -->
   <section>
-    <div class="sec-head"><h2>7-Day Trend</h2><span class="note" id="trendNote"></span></div>
-    <div class="card chart-card">
-      <div class="legend">
-        <span class="key"><span class="swatch bar" style="background:var(--series-req)"></span>Requests</span>
-        <span class="key"><span class="swatch" style="background:var(--series-lat)"></span>Avg latency (ms)</span>
-      </div>
-      <div id="chart"><div class="loading">Loading&hellip;</div></div>
-      <div class="chart-tip" id="chartTip"></div>
+    <div class="sec-head"><h2>Model Status</h2><span class="note">by tier</span></div>
+    <div class="tier-grid" id="tiers">
+      <div class="loading">Loading&hellip;</div>
     </div>
   </section>
 
@@ -456,6 +465,11 @@ let dashData = null;
 let dashTime = 0;      // ms epoch of last /dashboard fetch
 let statsData = null;
 let connected = false;
+
+// Per-tier "show idle discovered models" toggle state. Discovery can register
+// 100+ models that never see traffic; keep them collapsed by default so the
+// board stays scannable, but remember the user's choice across the 3s re-render.
+let tierIdleExpanded = { tier1: false, tier2: false, tier3: false };
 
 const $ = (id) => document.getElementById(id);
 
@@ -635,14 +649,37 @@ function modelRow(m) {
   '</tr>';
 }
 
+// Idle discovered model: registered via discovery, never took traffic, and
+// health-checking hasn't reported anything on it yet. These are the ones
+// that make tier3 balloon to 100+ rows with nothing worth looking at.
+function isIdleDiscovered(m) {
+  if (m.source !== "discovered") return false;
+  const hasTraffic = (m.total_requests || 0) > 0;
+  const hasStatus = m.status && m.status !== "unknown";
+  return !hasTraffic && !hasStatus;
+}
+
+function toggleRow(t, hiddenCount, expanded) {
+  const label = expanded
+    ? "&#9662; Hide " + hiddenCount + " idle discovered model" + (hiddenCount === 1 ? "" : "s")
+    : "&#9656; Show " + hiddenCount + " more idle discovered model" + (hiddenCount === 1 ? "" : "s");
+  return '<tr class="toggle-row" data-tier="' + t + '"><td colspan="5">' + label + '</td></tr>';
+}
+
 function renderTiers(d) {
   const tiers = d.tiers || {};
   const order = ["tier1", "tier2", "tier3"];
   const html = order.map((t) => {
     const models = tiers[t] || [];
-    const rows = models.length
-      ? models.map(modelRow).join("")
+    const hiddenCount = models.filter(isIdleDiscovered).length;
+    const expanded = !!tierIdleExpanded[t];
+    const visible = expanded ? models : models.filter((m) => !isIdleDiscovered(m));
+
+    let rows = visible.length
+      ? visible.map(modelRow).join("")
       : '<tr class="empty-row"><td colspan="5">no models</td></tr>';
+    if (hiddenCount > 0) rows += toggleRow(t, hiddenCount, expanded);
+
     return '<div class="card tier-card">' +
       '<h3>' + t.toUpperCase() + '<span class="count">' + models.length + ' models</span></h3>' +
       '<table><thead><tr>' +
@@ -652,6 +689,17 @@ function renderTiers(d) {
     '</div>';
   }).join("");
   $("tiers").innerHTML = html;
+  wireTierToggles();
+}
+
+function wireTierToggles() {
+  $("tiers").querySelectorAll(".toggle-row").forEach((row) => {
+    row.addEventListener("click", () => {
+      const t = row.getAttribute("data-tier");
+      tierIdleExpanded[t] = !tierIdleExpanded[t];
+      renderTiers(dashData);
+    });
+  });
 }
 
 function renderThrottle(d) {
