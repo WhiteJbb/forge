@@ -4,6 +4,94 @@
 
 ---
 
+## 2026-07-09 — 공개 배포 전 점검 (feat/free-provider-catalog, 마무리)
+
+### 배경
+
+사용자가 "이제 배포해도 될 정도인가?"라고 질문. "배포"의 의미(개인용 계속 사용/PyPI
+공개/프로덕션 멀티유저)를 나눠서 답한 뒤, "PyPI 공개" 기준으로 남은 격차(PR #1 미머지,
+CHANGELOG 미반영, 보안 체크리스트 미점검)를 짚었고 사용자가 진행을 승인("ㄱㄱ").
+
+### 한 일
+
+1. **CHANGELOG.md 갱신** — `[Unreleased]`에 무료 provider 카탈로그 확장(Cerebras/
+   Gemini/SambaNova/Zhipu), `capability_seed` 매커니즘, SambaNova 정정을 Added/Fixed로
+   반영. 이전까지 M3 후속 작업이 전혀 기록 안 돼 있었음(자체 ReviewChecklist "릴리스
+   전 CHANGELOG 갱신" 항목 미이행 상태였음).
+2. **보안/프라이버시 체크리스트 실제 코드 검증** (Explore 서브에이전트, 추측 금지 —
+   파일:라인 근거로만 판정) — `docs/ReviewChecklist.md`의 4항목을 대조:
+   - API 키 마스킹: 대부분 확인됐지만 `health.py`의 probe/list_models/discover 예외
+     로그 3곳이 `mask_secrets()`를 안 거치고 raw 예외 문자열(`f"...{e}"`)을 그대로
+     로그에 찍고 있었음 — CLAUDE.md 자체 규칙("API 키는 로그 어디에도 노출 금지")
+     위반 소지.
+   - 프롬프트/응답 본문 미저장: 확인됨(`RequestMetric`/`request_metrics` 스키마에
+     텍스트 필드 없음, 숫자/코드만).
+   - `/admin/*` loopback 강제: 확인됨(`admin.py`의 `require_loopback` 의존성 +
+     `server.py`의 `require_key` 이중 적용, 문서 주장이 아니라 실제 코드 강제).
+   - 안전한 기본값: `server.host` 기본 127.0.0.1, 타임아웃 전부 유한값은 확인됐지만,
+     **host를 비-loopback으로 바꾸면서 `FORGE_API_KEY`를 안 설정해도 아무 경고가
+     없었음** — README에는 "반드시 설정할 것"이라고만 적혀 있고 코드 강제가 없던 상태.
+3. **발견한 2건 수정**:
+   - `mask_secrets`(구 `_mask_secrets`)를 `litellm_provider.py`에서 `providers/base.py`
+     로 이동해 공유 유틸로 만듦(두 모듈 다 이미 `base.py`를 import하고 있어 계층상
+     자연스러움) — `litellm_provider.py`는 `from .base import mask_secrets as
+     _mask_secrets`로 기존 호출부를 그대로 유지, `health.py`의 3곳(`_probe_one`,
+     `_check_providers`, `discover`)에 `mask_secrets(str(e))` 적용.
+   - `server.py`의 `create_app()`에 시작 시 경고 추가: `server.host`가 loopback이
+     아니고 `config.auth.api_key`가 비어 있으면 경고 로그(차단 아님) — 기존 "유료
+     프로바이더 자동 등록" 경고와 같은 패턴(경고만, 로컬 개발 편의는 유지).
+4. **회귀 테스트 신설** (`tests/test_server_security.py`, 5건) — `mask_secrets` 자체
+   동작(알려진 키 접두사 마스킹, 무관 텍스트는 그대로) + 비-loopback/무인증 조합일 때
+   경고가 뜨는지·loopback이거나 키가 있으면 안 뜨는지(`assertNoLogs`, Python 3.10+).
+5. 전체 테스트 228건 통과(224 + 신규 5건 — 정확히는 이전 223건 + 5건).
+6. `docs/Plan.md`에 "공개 배포 전 점검" 섹션(D1-D5) 추가.
+
+### 오류/수정
+
+- **API 키 마스킹 불일치** (자체 발견, 보안 리뷰) — 증상: `list_models`/probe/discover
+  실패 시 예외 문자열이 마스킹 없이 로그에 그대로 남음. 원인: `_mask_secrets`가
+  `litellm_provider.py`에만 있고 `_extract_message` 경로에만 적용돼, 그 함수를
+  안 거치는 다른 예외 로그 지점(특히 health.py)에는 마스킹 계약이 전파되지 않음.
+  수정: 마스킹 함수를 공유 위치(`providers/base.py`)로 옮기고 누락된 3곳에 적용.
+- **비-loopback 무인증 무경고** (자체 발견) — 증상: `server.host: 0.0.0.0` +
+  `FORGE_API_KEY` 미설정 조합에서도 아무 경고 없이 부팅됨(README에만 "반드시 설정"이라
+  적혀 있고 코드 강제 없음). 원인: 배포 관련 안전장치가 "유료 provider 자동등록" 경고
+  하나만 있었고 인증 관련 안전장치는 만든 적이 없었음. 수정: 동일 패턴의 경고 추가.
+
+### 설계 결정
+
+- 두 수정 다 **차단이 아니라 경고**로 처리 — 로컬 개발 편의(무인증 기본값)를 깨지
+  않으면서, 실수로 외부에 노출했을 때만 눈에 보이는 신호를 준다. 기존 "유료 provider
+  자동등록" 경고와 일관된 철학.
+- `mask_secrets`의 새 위치를 `core/`가 아니라 `providers/base.py`로 정한 이유:
+  `health.py`가 이미 `providers.base`를 import하고 있어(Provider 프로토콜) 새 의존성
+  추가 없이 재사용 가능했고, 이 함수의 존재 이유 자체가 "provider 어댑터가 만든 예외
+  메시지에 provider 키가 에코될 수 있다"는 것이라 provider 계층에 두는 게 개념적으로도
+  맞음.
+
+### 남은 문제 및 다음 할 일
+
+- [ ] PR #1을 main에 squash merge (이 세션 마지막 단계)
+- [ ] README의 "pre-release, Expect breaking changes" 문구를 뗄지는 사용자가 별도로
+      결정할 사항 — 이번 점검 범위에는 포함하지 않음
+- [ ] `HealthMonitor`/`LiteLLMProvider`/`create_app` 자체를 위한 전용 단위 테스트
+      파일이 지금까지 없었다는 것도 이번에 발견 — 이번엔 보안 관련 경로만 좁게
+      커버(`test_server_security.py`), 전체 커버리지 보강은 별도 작업
+
+### 블로그/포트폴리오 소재
+
+- "마스킹 함수 하나 빼먹은 로그 라인 3개 — 보안 체크리스트를 문서로만 두지 않고
+  코드로 대조했을 때 나온 것"
+
+### Learning Recovery
+
+- AI가 주도: 보안 체크리스트 4항목 코드 대조(Explore 서브에이전트), 마스킹 유틸
+  리팩터링 위치 결정, 경고 로직 구현, 회귀 테스트 작성.
+- 다음에 직접 설명해보면 좋을 질문: (1) `assertNoLogs`가 Python 3.10부터 생겼다는 것과
+  그 전엔 이런 "로그가 안 떴는지" 검증을 어떻게 했을지, (2) `mask_secrets`를 왜 `core/`가
+  아니라 `providers/base.py`에 둬야 순환 의존(circular import)을 피하는지.
+
+
 ## 2026-07-09 — 정정: SambaNova free 오판정 수정 (feat/free-provider-catalog, 계속)
 
 ### 배경

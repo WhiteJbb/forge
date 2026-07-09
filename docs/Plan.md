@@ -76,6 +76,28 @@
 주의: `free` 플래그는 "결제수단 미연결 시 기본 경로"를 뜻함(기존 NVIDIA 항목과 동일 관례) —
 사용자가 나중에 결제수단을 연결하면 실제로는 과금될 수 있다는 점은 README/주석에 명시.
 
+### M3 후속: 공개 배포 전 점검 (완료 — 2026-07-09)
+
+배경: 사용자 질문 "이제 배포해도 될 정도인가?" → PyPI 공개(이미 `forge-gateway` dev
+등록됨)를 기준으로 남은 격차를 점검. `docs/ReviewChecklist.md` 보안/프라이버시
+섹션을 실제로 코드 대조해 검증.
+
+| # | 작업 | 상태 |
+| --- | --- | --- |
+| D1 | PR #1(무료 provider 카탈로그 확장) main 머지 | 완료 |
+| D2 | CHANGELOG.md에 M3 후속 작업(무료 provider, capability_seed, SambaNova 정정) 반영 | 완료 |
+| D3 | 보안/프라이버시 체크리스트 실제 코드 검증(Explore 서브에이전트) — API 키 마스킹, 프롬프트 본문 미저장, `/admin/*` loopback 강제, 안전한 기본값 | 완료 |
+| D4 | D3에서 발견한 2건 수정: (a) `health.py`의 probe/list_models 예외 로그 3곳이 `mask_secrets`를 안 거치고 raw 예외 문자열을 찍던 것 — 마스킹 함수를 `providers/base.py`로 옮겨 공유(`litellm_provider.py`와 중복 정의 제거) 후 3곳 모두 적용. (b) `server.host`가 loopback이 아닌데 `FORGE_API_KEY` 미설정이면 아무 경고도 없던 것 — `create_app()`에 시작 시 경고 추가(차단은 안 함, 기존 유료 provider 경고와 같은 패턴) | 완료 |
+| D5 | 회귀 테스트 신설(`tests/test_server_security.py`, 5건) | 완료 |
+
+완료 기준: 전체 테스트 통과, 보안 체크리스트 4개 항목 모두 코드로 검증(문서 주장이
+아니라), PR 머지.
+
+> **배포 전 점검 완료** (2026-07-09): 전체 228건 테스트 통과(신규 5건 포함). 발견된
+> 마스킹 누락 2곳 + 무경고 1건 수정. 상세 근거는 [WorkLog.md](WorkLog.md) 참조.
+> PostgreSQL/Redis/멀티 API 키 로테이션은 여전히 DESIGN.md §10 기준 "보류"(단일
+> 로컬 사용자 배포에는 불필요) — "공개 오픈소스로 내놓기" 기준 격차는 이번 점검으로 해소.
+
 > **M2.5 완료** (2026-07-09): 전체 153건 테스트 3회 연속 통과, editable install + `forge` CLI 동작.
 > **다음: 사용자 통합 검증** — 실키(NVIDIA)로 `forge doctor`/`forge start` + Cline(OpenAI) +
 > Claude Code(`ANTHROPIC_BASE_URL`) 실연동. 검증 후 M3(Dashboard, Prometheus, PostgreSQL) 착수.
