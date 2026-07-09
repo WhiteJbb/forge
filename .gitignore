@@ -1,2 +1,17 @@
 # Env / secrets
 .env
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Local data
+forge.db
+forge.db-journal
+
+# Build
+dist/
+build/
+*.egg-info/

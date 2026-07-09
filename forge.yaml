@@ -1,0 +1,87 @@
+# Forge 설정 — 단일 소스 (스키마: src/settings.py, 설계: DESIGN.md §5.9)
+version: 1
+
+server:
+  host: 127.0.0.1          # 외부 바인딩은 명시 설정 + FORGE_API_KEY 필수
+  port: 4000
+
+auth:
+  api_key_env: FORGE_API_KEY
+
+providers:
+  - name: nvidia
+    litellm_prefix: openai
+    api_base: https://integrate.api.nvidia.com/v1
+    api_key_env: NVIDIA_API_KEY
+    discovery: true
+    free: true               # 무료 티어 — 소속 전 모델 가격 (0,0)
+    rpm: 40                  # 실측 한도 (2026-07 확인)
+    max_concurrent: 8
+
+# capability/tier 오버라이드 — discovery 결과에 병합. 미지정 값은 defaults 적용
+models:
+  - id: "nvidia:z-ai/glm-5.2"
+    tier: tier1
+    capabilities: { code: 10, debug: 10, refactor: 10, docs: 8, context: 9, speed: 9 }
+  - id: "nvidia:deepseek-ai/deepseek-v4-pro"
+    tier: tier1
+    capabilities: { code: 10, debug: 10, refactor: 9, docs: 8, context: 10, speed: 8 }
+  - id: "nvidia:qwen/qwen3.5-397b-a17b"
+    tier: tier1
+    capabilities: { code: 9, debug: 9, refactor: 10, docs: 10, context: 10, speed: 8 }
+  - id: "nvidia:mistralai/mistral-large-3-675b-instruct-2512"
+    tier: tier2
+    capabilities: { code: 8, debug: 8, refactor: 8, docs: 9, context: 9, speed: 8 }
+  - id: "nvidia:nvidia/nemotron-3-ultra-550b-a55b"
+    tier: tier2
+    capabilities: { code: 8, debug: 7, refactor: 8, docs: 8, context: 9, speed: 7 }
+  - id: "nvidia:mistralai/mistral-medium-3.5-128b"
+    tier: tier2
+    capabilities: { code: 7, debug: 7, refactor: 7, docs: 8, context: 8, speed: 9 }
+  - id: "nvidia:deepseek-ai/deepseek-v4-flash"
+    tier: tier2
+    capabilities: { code: 8, debug: 7, refactor: 7, docs: 7, context: 8, speed: 10 }
+  - id: "nvidia:nvidia/nemotron-3-super-120b-a12b"
+    tier: tier2
+    capabilities: { code: 7, debug: 7, refactor: 7, docs: 7, context: 7, speed: 9 }
+  - id: "nvidia:gpt-oss-120b"
+    tier: tier2
+    capabilities: { code: 8, debug: 8, refactor: 8, docs: 9, context: 9, speed: 8 }
+  - id: "nvidia:mistralai/mistral-small-4-119b-2603"
+    tier: tier3
+    capabilities: { code: 6, debug: 6, refactor: 6, docs: 7, context: 6, speed: 10 }
+  - id: "nvidia:nvidia/llama-3.3-nemotron-super-49b-v1.5"
+    tier: tier3
+    capabilities: { code: 6, debug: 6, refactor: 6, docs: 7, context: 7, speed: 9 }
+  - id: "nvidia:minimaxai/minimax-m3"
+    tier: tier3
+    capabilities: { code: 6, debug: 6, refactor: 6, docs: 6, context: 6, speed: 9 }
+
+defaults:
+  capability: 7
+  tier: tier3
+  features: [tools, streaming]   # discovery 모델 기본값
+
+scheduler:
+  cooldown_seconds: 300
+  max_failures_before_cooldown: 3
+  max_attempts: 4
+  latency_ewma_alpha: 0.3
+  session_affinity: true
+  session_ttl_minutes: 30
+
+timeouts:
+  connect: 5
+  ttft: 30
+  total_deadline: 600
+
+metrics:
+  db_path: forge.db
+  retention_days: 30
+
+health:
+  probe_idle_minutes: 5
+  probe_timeout: 10
+
+analyzer:
+  llm_fallback: false

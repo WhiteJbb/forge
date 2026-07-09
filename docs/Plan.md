@@ -11,19 +11,22 @@
 
 | # | 작업 | DESIGN.md | 상태 |
 | --- | --- | --- | --- |
-| 1 | 디렉터리 재구성 + 데드 코드 제거 | §4 | 진행중 (feat/m1-foundation) |
-| 2 | forge.yaml 로더 + 검증 (`version`, 기본 바인딩 127.0.0.1) | §5.9 | 진행중 |
-| 3 | Model Registry (`features` 포함) | §5.2 | 진행중 |
-| 4 | Provider Layer — LiteLLM SDK (drop_params, reasoning 정규화, 에러 정규화) | §5.1 | 진행중 (위임) |
-| 5 | 요구 기능 하드 필터 | §5.5-0 | 진행중 |
-| 6 | 스트리밍 failover + usage 강제 수집 | §5.8 | 대기 |
-| 7 | 쿨다운 정합화 + context_length 상향 failover | §5.5, §7 | 대기 |
-| 8 | 타임아웃 3단 예산 + 취소 전파 | §5.13 | 대기 |
-| 9 | Metrics write-behind + 스키마 보강 + 격리 + 보존 + shutdown flush | §5.7 | 대기 |
-| 10 | 인증 + 메타데이터 헤더 + 키 마스킹 | §5.8 | 대기 |
-| 11 | /v1/embeddings | §5.8 | 대기 |
-| 12 | Health passive 전환 + 스태거링 + 워밍업 | §5.6 | 대기 |
-| 13 | LICENSE + README 클라이언트 연동 문서 | §8.2 | 대기 |
+| 1 | 디렉터리 재구성 + 데드 코드 제거 | §4 | 완료 |
+| 2 | forge.yaml 로더 + 검증 (`version`, 기본 바인딩 127.0.0.1) | §5.9 | 완료 |
+| 3 | Model Registry (`features` 포함) | §5.2 | 완료 |
+| 4 | Provider Layer — LiteLLM SDK (drop_params, reasoning 정규화, 에러 정규화) | §5.1 | 완료 |
+| 5 | 요구 기능 하드 필터 | §5.5-0 | 완료 |
+| 6 | 스트리밍 failover + usage 강제 수집 | §5.8 | 완료 |
+| 7 | 쿨다운 정합화 + context_length 상향 failover | §5.5, §7 | 완료 |
+| 8 | 타임아웃 3단 예산 + 취소 전파 | §5.13 | 완료 |
+| 9 | Metrics write-behind + 스키마 보강 + 격리 + 보존 + shutdown flush | §5.7 | 완료 |
+| 10 | 인증 + 메타데이터 헤더 + 키 마스킹 | §5.8 | 완료 |
+| 11 | /v1/embeddings | §5.8 | 완료 (명시 모델 지정 방식) |
+| 12 | Health passive 전환 + 스태거링 + 워밍업 | §5.6 | 완료 |
+| 13 | LICENSE + README 클라이언트 연동 문서 | §8.2 | 보류 — 라이선스 결정 대기 |
+
+> M1 구현: unittest 67건 + 통합 스모크 13항목 통과. 실기동 검증(NVIDIA 키로 실제 라우팅)은
+> 사용자 환경에서 확인 필요. 취소 전파는 코드 구현됨, 자동 테스트 미커버(수동 확인 항목).
 
 ### 진행 방식
 

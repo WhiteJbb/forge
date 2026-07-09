@@ -4,6 +4,27 @@
 
 ---
 
+## 2026-07-09 — M1 구현 (feat/m1-foundation)
+
+### 한 일
+
+1. Approval Gates 승인 처리 (PyYAML, DB 재생성) — 라이선스는 미결 유지
+2. **직접 구현**: forge.yaml 스키마/로더(settings.py), 타입 계약(types.py), Provider 프로토콜+typed 예외(providers/base.py), Registry(EWMA·슬라이딩 윈도·429 즉시 쿨다운), Scheduler(하드 필터→세션 고정→스코어링), API 계층(failover 루프·스트리밍 first-chunk 커밋·usage 수집·취소 전파·총 데드라인), 서버 조립
+3. **위임 구현** (병렬 서브에이전트): LiteLLM Provider(Opus), Metrics 저장 계층(Opus), Analyzer(Sonnet), Health Monitor(Sonnet), 테스트 스위트(Sonnet)
+4. 구 파일 삭제: src/analyzer·config·scheduler·health_monitor·metrics.py, config.yaml, run_litellm.bat, test_forge.py. 커밋돼 있던 pyc/forge.db 추적 해제, .gitignore 보강
+5. 검증: unittest 67건 통과, 통합 스모크 13항목 통과 (실기동에서 Auto Discovery가 NVIDIA 모델 110개 등록 확인)
+
+### 오류/수정
+
+- **Scheduler 세션 고정 버그** (테스트 에이전트 발견): 고정 확인이 tier 루프 내부에 있어 상위 tier 가용 시 하위 tier 핀이 무시됨 → 루프 진입 전 전역 확인으로 수정, 회귀 테스트 유지
+- MetricsEngine.start() 동기/비동기 불일치 → server.py 수정
+- Health 에이전트가 정리 중 .gitignore 미커밋 변경을 실수로 되돌림 → 복구
+
+### 남은 것 (M1)
+
+- [ ] LICENSE + README (라이선스 결정 대기)
+- [ ] NVIDIA 키로 실제 라우팅 실기동 검증 (사용자 환경)
+
 ## 2026-07-09 — 설계 확정 + 프로젝트 문서 체계 구축
 
 ### 한 일
