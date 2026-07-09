@@ -33,6 +33,12 @@ from .base import (
 
 logger = logging.getLogger(__name__)
 
+# litellm 로그 소음 억제 — 요청마다 찍는 INFO 배너와 "Give Feedback" 블록은
+# 게이트웨이 로그를 뒤덮는다. 에러 판단은 우리 typed 예외가 담당하므로 WARNING이면 충분.
+litellm.suppress_debug_info = True
+for _name in ("LiteLLM", "LiteLLM Router", "LiteLLM Proxy", "litellm"):
+    logging.getLogger(_name).setLevel(logging.WARNING)
+
 # thinking 모델이 응답/스트림에 섞는 비표준 필드 — pass_reasoning=False면 제거 (§5.1)
 _REASONING_FIELDS = ("reasoning_content", "reasoning", "reasoning_details", "thinking")
 
