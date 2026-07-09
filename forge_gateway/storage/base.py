@@ -53,6 +53,14 @@ class MetricsRepository(Protocol):
         """최근 days일 집계 요약. 기존 src/metrics.py 응답 형태 유지."""
         ...
 
+    def capability_stats(self, days: int) -> "list[dict]":
+        """(model, task_type)별 최근 days일 집계 — 학습 루프 입력 (§5.11).
+
+        각 행: {model, task_type, total, failures, tools_total, tools_failures}.
+        cancelled는 모델 잘못이 아니므로 집계에서 제외한다 (§7).
+        """
+        ...
+
     def prune(self, retention_days: int) -> int:
         """retention_days 이전 request_metrics 행 삭제, 삭제 건수 반환.
 

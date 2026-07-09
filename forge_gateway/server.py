@@ -22,9 +22,11 @@ from .core.health import HealthMonitor
 from .core.metrics import MetricsEngine
 from .core.policy import PolicyEngine
 from .core.pricing import fill_registry_prices
+from .core.prom import PromExporter
 from .core.registry import Registry
 from .core.scheduler import Scheduler
 from .core.throttle import ProviderThrottle
+from .core.tuner import CapabilityTuner
 from .providers.base import make_provider
 from .settings import ConfigError, load_config
 
@@ -52,9 +54,12 @@ def create_app(config_path: str = "forge.yaml") -> FastAPI:
     health = HealthMonitor(registry, providers, config.health)
     policy = PolicyEngine(config, registry)
     throttle = ProviderThrottle(config.providers)
+    tuner = CapabilityTuner(registry, metrics, config.tuner)
+    prom = PromExporter(registry, throttle)
+    metrics.on_record = prom.on_record  # 요청 경로에서 격리 호출됨
 
-    # reload가 교체하는 참조 — lifespan 종료 시 최신 monitor를 멈추기 위한 홀더
-    health_ref = {"monitor": health}
+    # reload가 교체하는 참조 — lifespan 종료/라우트가 항상 최신 인스턴스를 보게
+    runtime = {"monitor": health, "tuner": tuner, "prom": prom}
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -72,12 +77,14 @@ def create_app(config_path: str = "forge.yaml") -> FastAPI:
             logger.warning("auto discovery failed: %s", e)
         await health.warmup()  # 콜드 스타트: tier1 워밍업 (§5.13)
         await health.start()   # 워밍업 후 기동 — 첫 사이클이 tier1을 중복 probe하지 않게
+        await tuner.start()    # capability 학습 루프 (§5.11-3)
 
         yield
 
         # graceful shutdown: 신규 거부는 uvicorn이, drain 후 flush는 우리가 (§5.13)
         logger.info("Forge shutting down...")
-        await health_ref["monitor"].stop()
+        await runtime["tuner"].stop()
+        await runtime["monitor"].stop()
         await metrics.stop()  # 큐 flush 포함
         for provider in deps.providers.values():
             await provider.close()
@@ -146,7 +153,8 @@ def create_app(config_path: str = "forge.yaml") -> FastAPI:
                              for p in new_config.providers}
             new_health = HealthMonitor(new_registry, new_providers, new_config.health)
 
-            await health_ref["monitor"].stop()
+            await runtime["tuner"].stop()
+            await runtime["monitor"].stop()
             old_providers = dict(deps.providers)
 
             # 원자적 교체 — 이후 요청은 전부 새 참조를 본다
@@ -157,8 +165,16 @@ def create_app(config_path: str = "forge.yaml") -> FastAPI:
             deps.throttle = ProviderThrottle(new_config.providers)
             deps.providers = new_providers
 
-            health_ref["monitor"] = new_health
+            new_throttle = deps.throttle  # 위에서 이미 교체됨
+            new_prom = PromExporter(new_registry, new_throttle)
+            metrics.on_record = new_prom.on_record
+            new_tuner = CapabilityTuner(new_registry, metrics, new_config.tuner)
+
+            runtime["monitor"] = new_health
+            runtime["prom"] = new_prom
+            runtime["tuner"] = new_tuner
             await new_health.start()
+            await new_tuner.start()
             discovered = await new_health.discover()
             fill_registry_prices(new_registry, new_config)
 
@@ -183,7 +199,7 @@ def create_app(config_path: str = "forge.yaml") -> FastAPI:
 
     app.include_router(openai_api.build_router(deps), dependencies=[Depends(require_key)])
     app.include_router(anthropic_api.build_router(deps), dependencies=[Depends(require_key)])
-    app.include_router(observe_api.build_router(deps))
+    app.include_router(observe_api.build_router(deps, runtime))
     app.include_router(admin_api.build_router(deps, reload_config_fn))
 
     @app.get("/")

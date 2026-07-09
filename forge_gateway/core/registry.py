@@ -151,6 +151,10 @@ class ModelEntry:
     price_per_mtok: Optional[tuple[float, float]] = None  # None = unknown (§5.12)
     source: Literal["config", "discovered"] = "config"
     health: ModelHealth = field(default_factory=ModelHealth)
+    # 학습 루프의 텔레메트리 보정 (§5.11-3): cap_key → delta (±2 클램프는 적용 시점에)
+    capability_adjustments: dict = field(default_factory=dict)
+    # 학습 루프가 강등한 feature 목록 (근거 노출용 — features에서는 이미 제거됨)
+    demoted_features: list = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return {
@@ -158,6 +162,8 @@ class ModelEntry:
             "provider": self.provider,
             "tier": self.tier,
             "capabilities": self.capabilities,
+            "capability_adjustments": self.capability_adjustments,
+            "demoted_features": self.demoted_features,
             "features": sorted(self.features),
             "context_window": self.context_window,
             "source": self.source,

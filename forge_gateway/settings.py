@@ -123,6 +123,16 @@ class AnalyzerConfig(BaseModel):
     llm_fallback: bool = False
 
 
+class TunerConfig(BaseModel):
+    """Capability 학습 루프 (§5.11-3)"""
+
+    enabled: bool = True
+    interval_minutes: int = 30      # 보정 주기
+    window_days: int = 3            # 집계 윈도
+    min_samples: int = 5            # (model, task)별 최소 표본 — 미만이면 보정 안 함
+    demote_failure_rate: float = 0.5  # tools 요청 실패율이 이 이상이면 feature 강등
+
+
 class PolicyWhen(BaseModel):
     """정책 매칭 조건 — 지정된 필드만 검사한다 (전부 만족 시 매칭, §5.4)"""
 
@@ -199,6 +209,7 @@ class ForgeConfig(BaseModel):
     metrics: MetricsConfig = Field(default_factory=MetricsConfig)
     health: HealthConfig = Field(default_factory=HealthConfig)
     analyzer: AnalyzerConfig = Field(default_factory=AnalyzerConfig)
+    tuner: TunerConfig = Field(default_factory=TunerConfig)
     policies: list[PolicyRule] = Field(default_factory=list)
 
     @model_validator(mode="after")

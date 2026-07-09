@@ -11,9 +11,9 @@
 
 | # | 작업 | DESIGN.md | 담당 | 상태 |
 | --- | --- | --- | --- | --- |
-| 27 | **Capability 학습 루프** — 텔레메트리 점수 보정(±2 클램프) + tools feature 자동 강등 | §5.11-3 | 직접 | 진행중 |
-| 28 | **내장 정적 대시보드** — 단일 HTML SPA, `/dashboard/ui` (Next.js 대체 — 결정 ①) | §5.10 | Opus 위임 | 진행중 |
-| 29 | **Prometheus `/metrics`** — prometheus-client, JSON은 `/v1/stats` 유지 | §5.7 | Sonnet 위임 | 진행중 |
+| 27 | **Capability 학습 루프** — 텔레메트리 점수 보정(±2 클램프) + tools feature 자동 강등 | §5.11-3 | 직접 | 완료 |
+| 28 | **내장 정적 대시보드** — 단일 HTML SPA, `/dashboard/ui` (Next.js 대체 — 결정 ①) | §5.10 | Opus 위임 | 완료 |
+| 29 | **Prometheus `/metrics`** — prometheus-client, JSON은 `/v1/stats` 유지 | §5.7 | Sonnet 위임 | 완료 |
 | 30 | PostgreSQL Repository | §5.7 | — | 보류 (결정 ③) |
 | 31 | Redis StateStore | §5.2 | — | 보류 (설계: 멀티 인스턴스 시) |
 | 32 | 멀티 API 키 로테이션 | §10 | — | 후속 |

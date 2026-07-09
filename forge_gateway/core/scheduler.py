@@ -269,6 +269,9 @@ class Scheduler:
     def _score(self, entry: ModelEntry, analysis: AnalysisResult) -> float:
         cap_key = TASK_TO_CAPABILITY.get(analysis.task, "code")
         capability = float(entry.capabilities.get(cap_key, 7))
+        # 학습 루프의 텔레메트리 보정 — 시드(base)를 ±2 이내에서만 움직인다 (§5.11-3)
+        adjust = float(entry.capability_adjustments.get(cap_key, 0.0))
+        capability = max(0.0, min(10.0, capability + max(-2.0, min(2.0, adjust))))
 
         h = entry.health
         health = {"healthy": 10.0, "unknown": 5.0}.get(h.status, 0.0)

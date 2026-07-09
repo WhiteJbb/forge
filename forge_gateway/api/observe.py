@@ -1,15 +1,21 @@
-"""관측 엔드포인트 — /health, /v1/stats, /dashboard (DESIGN.md §5.8)
+"""관측 엔드포인트 — /health, /v1/stats, /metrics(Prometheus), /dashboard (DESIGN.md §5.8)
 
-Deps를 통해 참조를 읽으므로 /admin/reload의 원자적 교체(§5.9) 이후에도
-항상 최신 Registry/설정을 본다. /metrics는 M3에서 Prometheus 포맷으로 전환 예정.
+Deps/runtime을 통해 참조를 읽으므로 /admin/reload의 원자적 교체(§5.9) 이후에도
+항상 최신 Registry/Exporter를 본다.
 """
 
+from pathlib import Path
+
 from fastapi import APIRouter
+from fastapi.responses import FileResponse, Response
 
 from .openai import Deps
 
+_STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 
-def build_router(deps: Deps) -> APIRouter:
+
+def build_router(deps: Deps, runtime: dict) -> APIRouter:
+    """runtime: {"prom": PromExporter, ...} — reload가 항목을 교체한다."""
     router = APIRouter()
 
     @router.get("/health")
@@ -28,9 +34,22 @@ def build_router(deps: Deps) -> APIRouter:
         }
 
     @router.get("/v1/stats")
-    @router.get("/metrics")  # 하위 호환 — M3에서 Prometheus 포맷으로 교체 (§5.7)
     async def stats(days: int = 7):
         return await deps.metrics.range_summary(days)
+
+    @router.get("/metrics")
+    async def prometheus_metrics():
+        """Prometheus 표준 관례 포맷 (§5.7). JSON 통계는 /v1/stats."""
+        exporter = runtime.get("prom")
+        if exporter is None:
+            return Response(status_code=503, content=b"exporter not ready")
+        payload, content_type = exporter.render()
+        return Response(content=payload, media_type=content_type)
+
+    @router.get("/dashboard/ui")
+    async def dashboard_ui():
+        """내장 정적 대시보드 SPA (§5.10)"""
+        return FileResponse(_STATIC_DIR / "dashboard.html", media_type="text/html")
 
     @router.get("/dashboard")
     async def dashboard():

@@ -210,6 +210,29 @@ class SqliteRepo:
             "today": _build_today(today, today_rows),
         }
 
+    # ------------------------------------------------------------------ tuner
+
+    def capability_stats(self, days: int) -> "list[dict]":
+        """(model, task_type)별 집계 — CapabilityTuner 입력 (§5.11). cancelled 제외."""
+        start = (
+            datetime.now(timezone.utc) - timedelta(days=days)
+        ).isoformat()
+        with self._lock:
+            rows = self._conn.execute("""
+                SELECT model,
+                       COALESCE(task_type, 'coding') AS task_type,
+                       COUNT(*) AS total,
+                       SUM(CASE WHEN success = 0 THEN 1 ELSE 0 END) AS failures,
+                       SUM(CASE WHEN had_tools = 1 THEN 1 ELSE 0 END) AS tools_total,
+                       SUM(CASE WHEN had_tools = 1 AND success = 0 THEN 1 ELSE 0 END)
+                           AS tools_failures
+                FROM request_metrics
+                WHERE timestamp >= ?
+                  AND (error_type IS NULL OR error_type != 'cancelled')
+                GROUP BY model, COALESCE(task_type, 'coding')
+            """, (start,)).fetchall()
+        return [dict(r) for r in rows]
+
     # ------------------------------------------------------------------ prune
 
     def prune(self, retention_days: int) -> int:

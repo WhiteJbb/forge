@@ -90,6 +90,13 @@ health:
 analyzer:
   llm_fallback: false
 
+tuner:                               # capability 학습 루프 (§5.11-3)
+  enabled: true
+  interval_minutes: 30
+  window_days: 3
+  min_samples: 5
+  demote_failure_rate: 0.5
+
 # 정책 라우팅 (§5.4) — 위에서부터 first-match. 마지막 정책이 기본 라우팅.
 # when 없는 정책은 constraints 전용(항상 적용). 예:
 #   - name: free-only

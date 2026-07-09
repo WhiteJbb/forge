@@ -4,6 +4,19 @@
 
 ---
 
+## 2026-07-09 — M3 플랫폼화 (feat/m3-platform)
+
+### 한 일
+
+1. **Capability 학습 루프(직접, §5.11-3)**: request_metrics 집계(`capability_stats`, cancelled 제외) → 결정적 보정 규칙(실패율 50%↑=-2 / 25%↑=-1 / 2%↓&표본20↑=+1) → `ModelEntry.capability_adjustments`에 반영, Scheduler가 ±2 클램프로 적용. tools 포함 요청 실패율 50%↑ 시 **feature 자동 강등** + `demoted_features` 노출. 30분 주기, reload 연동
+2. **내장 정적 대시보드(Opus 위임)**: 단일 HTML SPA `/dashboard/ui` — 스탯 타일/tier 보드(쿨다운 카운트다운)/스로틀 게이지/7일 SVG 차트/정책 뱃지, 외부 리소스 0, 3초 폴링
+3. **Prometheus(Sonnet 위임)**: `/metrics` 전환(자체 CollectorRegistry, config 모델만 게이지로 카디널리티 제한), MetricsEngine `on_record` 훅으로 카운터/히스토그램, JSON은 `/v1/stats` 유지
+4. 범위 결정(DecisionLog): Next.js→내장 SPA, prometheus-client 승인, PG/Redis/멀티키/AI Judge 보류·후속
+
+### 검증
+
+- 전체 185건 테스트 통과, 스모크 31항목 통과 (reload 후 exporter 생존 포함)
+
 ## 2026-07-09 — M2.5 정리 스프린트 (feat/m2.5-cleanup)
 
 ### 한 일

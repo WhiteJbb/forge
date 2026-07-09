@@ -31,6 +31,8 @@ class MetricsEngine:
         self._queue: "asyncio.Queue[RequestMetric]" = asyncio.Queue(maxsize=_QUEUE_MAXSIZE)
         self._task: "asyncio.Task | None" = None
         self._running = False
+        # 실시간 관측 훅 (Prometheus 등) — record()가 격리 호출. reload 시 교체됨
+        self.on_record = None
 
         # 드롭 경고 스로틀 상태
         self._dropped = 0
@@ -71,7 +73,13 @@ class MetricsEngine:
         """요청 경로에서 호출. 절대 블로킹/예외 전파 금지.
 
         큐가 가득 차면 드롭하고 경고를 1회/분으로 스로틀 로그한다.
+        on_record 훅(Prometheus 등)도 여기서 — 실패는 격리.
         """
+        if self.on_record is not None:
+            try:
+                self.on_record(metric)
+            except Exception:
+                logger.exception("on_record 훅 실패 (무시)")
         try:
             self._queue.put_nowait(metric)
         except asyncio.QueueFull:
@@ -94,6 +102,10 @@ class MetricsEngine:
 
     async def range_summary(self, days: int) -> dict:
         return await asyncio.to_thread(self._repo.range_summary, days)
+
+    async def capability_stats(self, days: int) -> "list[dict]":
+        """CapabilityTuner 입력 (§5.11) — repo 집계 위임"""
+        return await asyncio.to_thread(self._repo.capability_stats, days)
 
     # ------------------------------------------------------------- internal
 
