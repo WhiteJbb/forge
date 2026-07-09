@@ -33,7 +33,6 @@ docs/Plan.md 갱신 (이번 마일스톤의 작업 순서·완료 기준)
 | --- | --- |
 | WorkLog.md | 매 작업 세션 종료 시 |
 | DecisionLog.md | 의사결정 발생 즉시 (Approval Gate 승인 결과 포함) |
-| PromptLog.md | 사용자의 주요 프롬프트 수신 시 |
 | Plan.md | 마일스톤 시작 전 + 작업 상태 변화 시 |
 | ProjectContext.md | 배경/방향 전환 시 |
 | DESIGN.md | 설계 변경 시 (구현과 어긋나면 설계서를 먼저 고친다) |

@@ -20,11 +20,11 @@
 
 **미결**: 최종 확정 및 PyPI 등록은 사용자 실행 대기.
 
-## 2026-07-09 — Git 산출물에 AI 흔적 금지
+## 2026-07-09 — PromptLog 폐지
 
-**결정**: 커밋 메시지·PR 본문·브랜치명 등에 `Co-Authored-By: Claude`, "Generated with Claude Code" 같은 AI 서명/흔적을 남기지 않는다 (CLAUDE.md 규칙 9). 이미 푸시된 문서 커밋은 amend + force push로 정리.
+**결정**: `docs/PromptLog.md`(사용자 프롬프트 원문 기록)를 필수 산출물에서 제외하고 파일 삭제. CLAUDE.md의 프롬프트 원문 저장 규칙도 제거, 이후 규칙 번호 재정렬.
 
-**이유**: 사용자 지시 — 저장소 히스토리를 도구 흔적 없이 유지.
+**이유**: 사용자 결정 — 프롬프트 원문 기록은 관리 비용 대비 효용이 낮음. 중요 논의는 ProjectContext/DecisionLog/WorkLog로 충분히 커버됨.
 
 ## 2026-07-09 — NVIDIA 무료 티어 RPM 한도 40 확인
 
