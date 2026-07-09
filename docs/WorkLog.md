@@ -22,8 +22,13 @@
 
 ### 남은 것 (M1)
 
-- [ ] LICENSE + README (라이선스 결정 대기)
+- [x] LICENSE + README — MIT 확정 후 작성 완료 (클라이언트별 연동 스니펫, 프라이버시 명시 포함)
 - [ ] NVIDIA 키로 실제 라우팅 실기동 검증 (사용자 환경)
+
+### 후속 기록
+
+- M1 squash merge → main `6e99236`. gh CLI 부재로 git 네이티브 squash merge 사용 (gh 설치 권장 전달)
+- 라이선스 MIT 확정 → LICENSE + README.md 작성 (M1 전 항목 종료)
 
 ## 2026-07-09 — 설계 확정 + 프로젝트 문서 체계 구축
 
