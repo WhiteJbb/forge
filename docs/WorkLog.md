@@ -4,6 +4,276 @@
 
 ---
 
+## 2026-07-11 — 속도 기반 라우팅 정책 확장 (feat/paid-provider-catalog, 계속)
+
+### 배경
+
+전날 유료 프로바이더 카탈로그 작업에 이어, 사용자가 "지금 새로 들어온 모델들도
+벤치마킹 기준으로 티어 분류 해주고 일단 기준을 속도로 좀 잡을까 무료 모델들은
+너무 느려서 거의 못써먹겠던데"라고 요청. 바로 tier를 다시 매기기 전에 스케줄러
+코드를 먼저 읽었다 — `scheduler.py::_score()`가 실제로 무엇을 읽는지 확인하지
+않고 tier를 재작업하면 헛수고가 될 수 있어서.
+
+### 한 일
+
+1. **스코어링 코드 확인 — `speed` 필드가 dead data임을 발견**: `capability_seed`에
+   정성껏 넣어둔 `speed` 점수(0~10)가 `_score()`의 `TASK_TO_CAPABILITY` 매핑에
+   전혀 등장하지 않음(code/debug/refactor/docs만 참조). 실제 속도 영향 경로는
+   `tier`(가중치 10%, 기본 그룹 순서도 결정)와 실측 EWMA latency(가중치 15%,
+   2000ms 이상은 전부 0점이라 2초와 180초를 구분 못함) 둘뿐.
+2. **기존 전례 발견**: `forge.yaml`을 다시 읽어보니 이미 2026-07-09에 이 문제를
+   한 번 겪었었다 — `default` 정책의 `prefer` 순서가 NVIDIA 무료 모델 중 빠른
+   것만 골라 우선시키고, tier1(glm-5.2/qwen3.5, TTFT 180초+)는 일부러 제외해둔
+   상태였음. `tier`는 실력 순위, 속도는 정책으로 분리하는 기존 설계를 발견하고
+   사용자에게 확인 — "tier 재정의"가 아니라 "정책 prefer 확장"이 맞는 방향임을
+   합의.
+3. **범위 확장 확인**: 신규 유료 4개뿐 아니라 기존 무료 프로바이더(nvidia는 이미
+   측정됐으니 cerebras/gemini/sambanova)까지 같이 재측정하기로 사용자가 범위를
+   넓힘.
+4. **실측**:
+   - Fireworks(deepseek-v4-pro/kimi-k2p6/qwen3p7-plus/glm-5p2), Cohere(command-a-03-2025/
+     command-r7b-12-2024), Cerebras(zai-glm-4.7/gpt-oss-120b), Gemini(gemini-3-flash-preview/
+     gemini-3.5-flash), SambaNova(DeepSeek-V3.1/gpt-oss-120b/MiniMax-M2.7)를 `litellm.
+     acompletion(stream=True)`로 직접 호출해 TTFT + `content`/`reasoning_content` 글자
+     수를 따로 집계. reasoning 모델(cerebras/sambanova의 gpt-oss-120b, fireworks 3종)은
+     TTFT는 빠른데 짧은 max_tokens 예산 안에서 보이는 답이 0자인 경우가 많았음 —
+     숨은 reasoning 토큰이 예산을 다 먹어서. 이걸 놓치면 "TTFT 빠름 = 빨리 씀"으로
+     오판할 뻔했다.
+   - **Gemini "Flash" 계열이 실측 TTFT 16~19초**로 나와서 놀랐다 — 이름과 정반대.
+   - SambaNova `MiniMax-M2.7`은 결제수단 없이는 호출 자체가 막힘(에러로 확인).
+   - x.ai(grok-4.5/grok-build-0.1), Together(deepseek-v4-pro)는 실키/크레딧이 없어
+     서브에이전트로 Artificial Analysis(3rd-party) 조사 — `deepseek-v4-pro`가
+     NVIDIA(무료) 18초 대비 Together/Fireworks(유료)에서 1~1.5초로 10배 이상
+     빠르다는 걸 확인.
+5. **`forge.yaml` 정책 갱신**: `default`/`heavy-work`/`hard-tasks` 세 정책의
+   `prefer` 순서를 실측으로 재작성. 사용자 결정("무료 먼저 다 쓰고, 안 되거나
+   느리면 유료 빠른 모델로")에 따라 `default`는 무료 빠른 것(mistral-small-4 →
+   sambanova:DeepSeek-V3.1 → nemotron-3-super → deepseek-v4-flash) 다음에만 유료
+   빠른 것(cohere:command-a-03-2025 → xai:grok-build-0.1 → fireworks:deepseek-v4-pro)
+   순서. `heavy-work`/`hard-tasks`는 무료 v4-pro를 그대로 우선하고 유료 고속
+   호스팅은 쿨다운 시 대체용으로만 추가.
+   - `together:deepseek-ai/DeepSeek-V4-Pro`를 처음엔 넣었다가, `PolicyEngine.plan()`을
+     직접 호출해 검증하던 중 "policy route item matches no tier/model — ignored"
+     경고를 발견 — 사용자 환경에 `TOGETHER_API_KEY`가 없어서 매 요청마다 헛경고만
+     반복될 상황이었음. 빼고 문서에 "키 생기면 추가" 메모만 남김.
+6. **검증**: `PolicyEngine.plan()`을 세 정책 전부(coding/debug/heavy-work 트리거)에
+   대해 직접 호출해 전 prefer 항목이 경고 없이 실제 등록 모델로 resolve됨을
+   확인. 전체 유닛테스트 235건 재실행, 통과 유지.
+7. **문서**: `docs/Research.md`(2026-07-11 "속도 전면 실측" 섹션, 표+교훈 3개),
+   `docs/DecisionLog.md`(tier 재정의 대신 정책 확장을 택한 이유 + speed dead-data
+   발견 기록), `docs/Plan.md`(S1-S5 작업표), 본 항목.
+
+### 설계 결정
+
+- **`tier`를 속도로 재정의하지 않았다** — `hard-tasks`/`heavy-work` 정책이 "느려도
+  강한 모델을 쓴다"는 의도로 tier1을 명시적으로 prefer하고 있는데, tier의 의미
+  자체를 속도로 바꾸면 그 정책의 의도가 깨진다. 정책 `prefer` 확장이 기존 설계
+  의도를 보존하면서 새 데이터만 반영하는 최소 변경이었다.
+- **Together를 알고도 정책에 안 넣었다** — 데이터는 최상위권(TTFT ~1초, tok/s
+  ~208)이었지만 키가 없는 상태에서 참조하면 매 요청마다 로그만 더러워진다.
+  "확인된 것만, 지금 쓸 수 있는 것만" 원칙을 지켰다.
+
+### 남은 문제 및 다음 할 일
+
+- `speed` capability 필드는 여전히 dead data — 스코어링에 실제로 반영하거나
+  latency 스코어 구간을 세분화(지금은 2초 이상 전부 0점)하는 건 별도 개선 과제.
+- Together AI 키가 생기면 세 정책 모두에 `together:deepseek-ai/DeepSeek-V4-Pro`
+  추가할 것 (실측 최상위권).
+- SambaNova `MiniMax-M2.7`은 결제수단 추가 전까지 실사용 불가 — capability_seed는
+  유지하되 참고 정보로만 취급 중.
+- 이번 실측(TTFT/tok/s)은 각 모델당 1회 샘플이라 변동 가능성 있음(AA 벤치마크도
+  ±10~15% 변동 명시) — 장기적으로는 forge 자체의 텔레메트리 학습 루프(tuner.py)가
+  실제 트래픽 기반으로 보정하겠지만, 지금은 정책 `prefer` 순서가 이 1회 샘플에
+  의존하고 있다는 한계는 남아있음.
+
+### 후속: "정책상 사용하면서 tier가 올라가나?" 질문에 답하려고 tuner.py 확인
+
+사용자가 "그럼 정책상 사용하면서 점점 위로 올라오나?"라고 질문. `tuner.py`를
+읽고 정확히 답함: `prefer` 목록 순서는 정적 YAML이라 실사용으로 재배열되지
+않는다. 별도로 있는 학습 루프(`CapabilityTuner`)는 `tier`가 아니라 task별
+`capability_adjustments`만 ±2 클램프(상향은 +1로 더 보수적)로 건드리고, 그마저도
+표본 5개 이상(`min_samples`) 쌓여야 작동 — tier 자체가 승격되는 경로는 코드에
+없음을 확인.
+
+### 후속: "성능·속도 좋은 유료 모델은 tier1에 있어야 하지 않냐" → 전체 tier 재검토
+
+사용자 지적에 답하다가 실제 불일치를 하나 발견(`fireworks:glm-5p2`가
+`nvidia:z-ai/glm-5.2`와 같은 모델인데 tier1 누락 — 별도 커밋으로 즉시 수정,
+위 커밋 로그 참조) 후, 사용자가 "모델들 다 검토해서 tier 수정해줘"라고 요청해
+전체 재검토 진행.
+
+- **내가 새로 넣은 항목 안에서 발견한 것**: `xai:grok-4.5`(자체 발표만, 제3자
+  미검증)가 형제 모델 `grok-build-0.1`(동일 근거 수준으로 tier2)과 다르게
+  tier1을 받고 있던 걸 발견 — tier2로 정정. `together`/`fireworks`의
+  `deepseek-v4-pro` capabilities `context` 값이 8/9로 미세하게 어긋나 있던 것도
+  9로 통일.
+- **기존 NVIDIA 데이터(2026-07-09 세션) 재검토**: 이 세션의 전체 판단 맥락을
+  다 알 수 없어서 함부로 건드리지 않기로 하고, 사용자에게 먼저 후보를 보여줌.
+  같은 지표(SWE-bench Verified/Pro)로 직접 비교 가능하고 tier1 범위와 겹치는
+  세 개(`mistral-medium-3.5`, `deepseek-v4-flash`, `gemini-3.5-flash`)를 사용자
+  확인 후 tier1로 승격. `minimax-m3`(자체 발표만)는 grok-4.5와 같은 기준으로
+  후보에서 제외, tier2 유지.
+- **건드리지 않은 것**: `sambanova:MiniMax-M2.7`/`DeepSeek-V3.1`은 Research.md에
+  이미 "2차 집계만으로 tier1 승격 보류 중"이라고 명시돼 있던 기존 결정이라
+  그대로 유지 — 누락이 아니라 확인된 보류임을 재확인.
+- 평가 기준을 명문화(DecisionLog.md 참조): "제조사 자체 발표뿐, 제3자 미검증"인
+  벤치마크는 tier1 불충분 — 이전엔 이 기준을 모델마다 다르게 적용했던 게
+  일관성 문제의 원인이었음.
+- `tests/test_settings.py`의 grok-4.5 tier 기대값을 tier1→tier2로 갱신. 전체
+  테스트 235건 재실행 통과. `PolicyEngine.plan()`으로 tier 풀 재확인(승격된
+  3개가 tier1 그룹에, grok-4.5가 tier2 그룹에 정확히 반영됨).
+
+**부수 리스크 인지**: grok-4.5가 tier2로 내려가면서 `default` 정책의 일반
+fallback(`[tier2, tier1, tier3]`, tier2가 먼저 시도됨) 풀에 들어갔다 — prefer
+목록 7개가 전부 막혔을 때만 도달하는 드문 경로지만, 신규 등록이라 실측
+latency가 없어 중립값(5.0)으로 시작해 한동안 capability 점수만으로 뽑힐 수
+있음. 실트래픽이 쌓이면 EWMA가 자연히 보정할 것으로 보고 별도 조치는 안 함.
+
+---
+
+## 2026-07-10 — 유료 프로바이더 카탈로그 확장 (feat/paid-provider-catalog)
+
+### 배경
+
+사용자가 "다른 유료 API 프로바이더들도 다 인식 가능하도록 하려는데 뭐뭐 추가해야될까?
+x.ai라던지"라고 질문. 바로 목록을 나열하지 않고 먼저 방향을 확인했다 — 지금까지
+카탈로그 확장은 "공식 문서로 확인된 **무료** 프로바이더만 큐레이션"이라는 방향(Plan.md
+M3 후속)이었고, 유료 프로바이더를 폭넓게 받자는 결정은 없었기 때문. 질문 3개로 정리:
+① 목적(페일오버 다양성/프리미엄 모델 사용/포괄적 카탈로그) → **포괄적 카탈로그**,
+② 우선 대상(x.ai/Cohere/Together AI·Fireworks/AWS Bedrock·Azure OpenAI 중 복수 선택)
+→ **전부**, ③ 가격 정확도(공식 페이지 직접 시딩/litellm 내장 신뢰/추적 안 함) →
+**공식 pricing 페이지 근거로 직접 시딩**.
+
+②에 답하자마자 바로 구현하지 않고 실제 인증 어댑터(`litellm_provider.py`)와
+`ProviderConfig` 스키마를 먼저 읽어 확인한 결과, AWS Bedrock(AWS SigV4 3종
+자격증명)과 Azure OpenAI(리소스별 커스텀 deployment 이름 + `api_version`)는
+"단일 API 키 + api_base"라는 기존 카탈로그 계약에 안 맞는다는 걸 발견 — 스키마
+확장이 필요한 별도 결정이라 다시 질문했고, 사용자가 "이번엔 x.ai/Cohere/Together/
+Fireworks만, Bedrock/Azure는 별도 작업으로 미룬다"를 선택.
+
+### 한 일
+
+1. **리서치 (일반 서브에이전트 4개 병렬, 프로바이더별 1개)** — x.ai/Cohere/Together AI/
+   Fireworks AI 공식 문서를 웹에서 직접 fetch해서 엔드포인트/인증/모델ID/공식
+   pricing/레이트리밋/코딩 벤치마크를 조사. 결과는 `docs/Research.md` 2026-07-10
+   섹션에 출처 URL과 함께 기록.
+   - **프롬프트 인젝션 의심 감지**: Together AI·Fireworks 담당 에이전트가 WebSearch
+     결과 일부에서 전제를 반박하는 부가 텍스트 + 미검증 수치가 섞여 드는 비정상
+     패턴을 발견하고 전량 폐기, 대신 `curl -L`로 공식 문서 원문(mintlify raw md,
+     HF README raw, discourse json)을 직접 받아 재검증. 사용자에게도 이 사실을
+     투명하게 알림.
+   - Cohere는 OpenAI 호환 Compatibility API가 있다는 건 확인됐지만 현재 플래그십
+     (Command A) 가격을 공식 페이지에서 1차 소스로 확인하지 못함(레거시 모델만
+     명시) — 3rd-party 인용값은 채택하지 않고 "미확인"으로 남김.
+2. **`forge_gateway/settings.py`**:
+   - `PROVIDER_CATALOG`에 `xai`/`cohere`/`together`/`fireworks` 4개 항목 추가.
+     x.ai/Fireworks/Cohere는 discovery 미확인이라 `discovery: false` +
+     `capability_seed`로 모델을 직접 공급, Together AI는 공식 문서로 discovery가
+     동작함을 확인해 기본값(true) 유지.
+   - `capability_seed`에 `price_per_mtok` 선택 필드 신설, `apply_auto_providers`가
+     `ModelOverride.price_per_mtok`까지 스레딩하도록 확장(기존 tier/capabilities
+     스레딩과 동일 매커니즘) — 이게 없으면 가격을 공식 소스로 확인해도 꽂을 자리가
+     없었음(§5.12 가격 우선순위 1번 경로는 forge.yaml 수동 오버라이드만 지원했음).
+   - 벤치마크/가격을 1차 소스로 확인 못한 모델(Cohere 전체, Fireworks의
+     Qwen3.7-Plus/GLM-5.2)은 `price_per_mtok`만 채우거나 아예 시드를 비워 tier3
+     기본값·litellm 폴백에 위임 — 없는 근거를 만들어내지 않음.
+3. **문서 동기화** — `.env.example`(신규 키 4개 안내), `README.md`("Adding a
+   provider is just an API key" 목록 갱신 + 가격 소싱 정책 문단 + Bedrock/Azure
+   미지원 사유 명시), `CHANGELOG.md`(Added), `docs/Research.md`(위 리서치 전체
+   + 프롬프트 인젝션 메모), `docs/Plan.md`(M3 후속 "유료 프로바이더 카탈로그
+   확장" 섹션, Bedrock/Azure는 P6으로 보류 표기).
+4. **`tests/test_settings.py`**: 신규 프로바이더 자동등록, Cohere의 무시드
+   등록, Together discovery 유지, `price_per_mtok` 스레딩(전체 시드/가격만
+   시드 두 경우 모두) 검증 테스트 5건 추가. 전체 235건 통과.
+5. **실키 검증 (사용자가 4개 중 3개에 가입해서 키 제공, Together는 $5 선불
+   요구사항 때문에 스킵)** — `forge doctor`로 먼저 확인했더니 xai/cohere에서
+   `list_models` 경고 로그가 `UnicodeEncodeError`로 깨져 실제 에러가 안 보였다.
+   콘솔 출력 대신 `load_config` + `make_provider(...).list_models()`를 직접
+   호출해 결과를 파일에 써서 우회 확인:
+   - **Cohere discovery가 실제로 동작함**(`GET .../compatibility/v1/models` →
+     200, 실제 31개 모델) — 조사 당시 "미확인"으로 보수적으로 꺼뒀던
+     `discovery: false`가 틀렸음이 실증됨. `settings.py`에서 제거(기본값
+     true로 전환), 이제 discovery로 전부 커버되므로 `default_models` 수동
+     목록도 삭제. `tests/test_settings.py`의 관련 테스트도 갱신.
+   - **x.ai**: 403 "신규 팀에 크레딧 없음" — 신규가입 무료크레딧이 없다는
+     사용자 보고와 일치, 문서로는 못 찾았던 사실을 실증.
+   - **Fireworks**: 실제로 $6 크레딧을 받았으나(문서로는 못 찾았던 사실 —
+     사용자 실사용이 더 정확한 SambaNova 패턴 재현) 지금은 412 "계정 정지"
+     상태 — 카탈로그 설정 문제가 아니라 계정 상태 문제.
+   - 로깅 크래시 자체는 `.env` 정리 후 재현 실패 — 원인 확정은 못했지만,
+     `server.py`의 로깅 초기화에 `sys.stdout`/`stderr` `errors="backslashreplace"`
+     방어 코드를 추가(`cli.py` `main()`에 이미 있는 패턴을 서버 부팅 경로에도
+     적용). 업스트림 에러는 임의의 유니코드를 담을 수 있다는 게 명시적으로
+     드러난 사례라, 근본 원인을 못 잡았어도 방어는 해두는 게 맞다고 판단.
+   - 전체 테스트 재실행, 235건 통과 유지.
+
+### 설계 결정
+
+- **가격은 forge.yaml 오버레이가 아니라 `capability_seed`에 얹었다** — 이미
+  존재하는 자동등록 경로(사용자가 키만 넣으면 등록)를 그대로 쓰기 위해서다.
+  별도 forge.yaml `models:` 섹션을 미리 채워두는 방식도 가능했지만, 그러면
+  README의 "Adding a provider is just an API key" 원칙이 깨진다.
+- **Bedrock/Azure는 스키마를 억지로 끼워 맞추지 않고 통째로 미뤘다** — 계약
+  변경(§ "계약 우선" 원칙)이 걸린 결정이라, 조사 중간에 발견하자마자 구현을
+  멈추고 사용자에게 다시 물었다. 어설프게 끼워 넣으면(예: `api_key_env`에
+  AWS_ACCESS_KEY_ID를 넣고 Bearer 토큰처럼 취급) 실제로 동작하지 않거나
+  Azure의 deployment 매핑을 사용자가 우회할 방법이 없어져 오히려 더 나쁘다.
+- **Cohere 가격을 3rd-party 인용값으로 채우지 않았다** — "공식 페이지 근거로
+  직접 시딩"이라는 이번 결정의 취지 자체가 litellm 내장 표(불확실한 출처)를
+  신뢰하지 않겠다는 것이었으므로, 똑같이 출처가 약한 3rd-party 값으로 대체하면
+  결정의 의미가 없어진다. 미확인인 채로 litellm 폴백에 맡기는 게 일관적이다.
+
+6. **Fireworks 계정 정지 해제 후 재검증 + discovery 재검토** — 사용자가 결제 문제를
+   해결("firework 풀었어")한 뒤 다시 확인: `list_models` 성공(7개 모델), 실제
+   `probe`(채팅 completion, max_tokens=1)도 `deepseek-v4-pro`로 성공(레이턴시
+   ~1.8초) — 연결·계정 상태·실요청 경로 전부 검증 완료.
+   - `list_models`가 반환한 7개 중 `flux-1-schnell-fp8`(이미지 생성 모델)이
+     섞여 있는 걸 발견 — discovery는 실제로 동작하지만(공식 문서에 관리 API만
+     보고 "불가"라 판단했던 원래 조사가 틀렸음), 채팅 불가 모달까지 같은
+     목록에 노출된다는 뜻. forge는 4xx를 failover 없이 그대로 반환하므로
+     스케줄러가 이런 모델을 고르면 요청이 복구 없이 실패할 위험이 있음
+     (Fireworks 7개 중 1개 ≈14%, 이미 discovery:true로 바꿔둔 Cohere도
+     31개 중 1개 ≈3%로 같은 위험을 갖고 있었다는 걸 이때 같이 발견).
+   - 사용자에게 물어 **Cohere/Fireworks 둘 다 discovery:false로 되돌리기**로
+     결정 — discovery 자체는 동작이 확인됐지만 안전(failover 가능한 순수
+     채팅 모델만 큐레이션)을 우선. `settings.py`의 cohere 항목을 원복
+     (`default_models` 복원), 관련 테스트도 원복하고 근거 주석을 "미확인"이
+     아니라 "확인됐지만 의도적으로 off"로 갱신.
+   - 전체 테스트 재실행, 235건 통과 유지.
+
+### 남은 문제 및 다음 할 일
+
+- Together AI는 여전히 미검증(사용자가 $5 선불 부담으로 키를 안 만듦) —
+  discovery/가격은 문서 근거만으로 유지 중.
+- x.ai는 연결은 확인됐지만 계정 크레딧이 0(구매 필요) — 실제 채팅 요청까지는
+  아직 미검증.
+- Cohere/Fireworks 모두 discovery 자체는 동작이 확인됐으나 비채팅 모달 혼입
+  위험으로 의도적으로 꺼둔 상태 — 나중에 "채팅 모델만 걸러내는" 필터링
+  매커니즘을 만들면 다시 켤 수 있음(지금은 스코프 밖으로 미룸).
+- `forge doctor`의 Unicode 로깅 크래시 근본 원인 미확정(재현 실패) — 재발하면
+  `.env` 값에 비-ASCII 문자가 실제로 섞여 있는지부터 확인.
+- AWS Bedrock/Azure OpenAI — `ProviderConfig` 스키마 확장(별도 작업, Plan.md P6).
+
+### 블로그/포트폴리오 소재
+
+- "무료 프로바이더 확장과 유료 프로바이더 확장이 왜 다른 문제인가" — 가격
+  정확도가 실제 과금과 연결되는 순간부터 "1차 소스 인용 vs 지어내지 않기"가
+  코드 설계(스키마에 선택 필드 하나 더 두는 것)로 이어지는 과정.
+- "서브에이전트가 프롬프트 인젝션을 스스로 감지하고 폐기한 사례" — 웹 리서치
+  위임 시 결과를 맹신하지 않고 1차 소스 직접 대조로 되돌아간 방어적 행동.
+
+### Learning Recovery
+
+- AI가 주도적으로 처리: 4개 프로바이더 리서치 위임, 카탈로그 스키마 확장 설계,
+  문서 5종 동기화, 테스트 작성.
+- 아직 완전히 이해 못했을 수 있는 부분: `core/pricing.py`의 가격 우선순위 3단계
+  (forge.yaml > free 플래그 > litellm.model_cost)가 `capability_seed`를 통한
+  자동등록 경로에서 정확히 어떻게 상호작용하는지, LiteLLM이 Bedrock/Azure의
+  자격증명을 내부적으로 어떻게 읽어오는지(boto3 체인 vs 명시적 kwargs)는 다음에
+  직접 설명해볼 가치가 있음.
+
+---
+
 ## 2026-07-09 — 공개 배포 전 점검 (feat/free-provider-catalog, 마무리)
 
 ### 배경

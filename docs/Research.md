@@ -189,6 +189,292 @@ provider와 동일하게 취급, `capability_seed`는 모델 품질 순위라서
 
 **정정 후 상태**: SambaNova만 `free` 플래그 제거, Cerebras/Gemini는 변경 없음.
 
+## 2026-07-10 — 유료 프로바이더 확장 조사 (x.ai / Cohere / Together AI / Fireworks AI)
+
+사용자 요청("다른 유료 API 프로바이더들도 다 인식 가능하도록") 대응. 무료 티어 확장과
+달리 실제 과금이 걸리므로, 가격은 각 프로바이더 **공식 pricing 페이지를 1차 소스로
+직접 시딩**했다(사용자 결정) — litellm 내장 가격표(3순위 폴백, `core/pricing.py`)를
+그냥 신뢰하지 않았다. 확인 못한 항목은 "미확인"으로 남기고 지어내지 않았다.
+
+**조사 방법에 대한 메모(투명성)**: Together AI/Fireworks AI 조사 중 WebSearch 결과
+일부가 정상적인 문서 검색 결과가 아니라 전제를 반박하는 듯한 부가 텍스트와 미검증
+수치를 끼워 넣는 패턴을 보였다(프롬프트 인젝션 의심). 해당 결과는 전량 폐기하고
+공식 문서 원문(`docs.together.ai`, `docs.fireworks.ai`, `huggingface.co` 모델카드
+등)을 직접 fetch해서 재검증한 값만 아래에 반영했다.
+
+### x.ai (Grok)
+- `api_base`: `https://api.x.ai/v1`, `/v1/chat/completions` OpenAI 호환 확인. 공식 REST
+  레퍼런스에 `GET /v1/models`가 없어(chat/completions·responses·deferred-completion
+  3개만 문서화) discovery 지원 여부는 **미확인** → 보수적으로 `discovery: false`.
+  출처: [API reference](https://docs.x.ai/docs/api-reference), [quickstart](https://docs.x.ai/developers/quickstart)
+- 인증: `Authorization: Bearer $XAI_API_KEY`. 출처: 위 quickstart
+- 가격(USD/1M tok, input/output): `grok-4.5` $2.00/$6.00(context 500K), `grok-4.3`
+  $1.25/$2.50(context 1M), `grok-build-0.1`(에이전틱 코딩 전용) $1.00/$2.00(context 256K).
+  출처: [grok-4.5](https://docs.x.ai/developers/models/grok-4.5), [grok-4.3](https://docs.x.ai/developers/models/grok-4.3), [grok-build-0.1](https://docs.x.ai/developers/models/grok-build-0.1)
+- 레이트리밋(Tier 0 기본): grok-4.3/grok-build-0.1 계열 RPS 37/TPM 10M, grok-4.5 RPS
+  150/TPM 50M — 카탈로그의 `rpm`에는 반영하지 않음(다른 유료 provider와 동일 관례,
+  과금 등급에 따라 크게 달라짐). 출처: [rate-limits](https://docs.x.ai/developers/rate-limits)
+- 벤치마크: grok-4.5 SWE-bench Pro 64.7% — **xAI 자사 발표, 제3자 미검증**이라
+  `capability_seed`에서 tier1로는 반영했지만 참고용 caveat으로 남김. grok-build-0.1은
+  독립 벤치마크 수치가 없어 tier2로 보수적 배치.
+- 무료 크레딧: 공식 문서에 언급 없음, **미확인**(3차 매체 주장은 채택하지 않음).
+
+### Cohere
+- Cohere는 OpenAI SDK를 그대로 쓸 수 있는 **Compatibility API**를 공식 제공한다:
+  `https://api.cohere.ai/compatibility/v1`, `/chat/completions`가 streaming/tool
+  use/structured output까지 지원. 출처: [compatibility-api](https://docs.cohere.com/docs/compatibility-api)
+- 이 경로의 `GET /models`가 OpenAI 포맷으로 동작하는지는 문서에 명시 없음 —
+  **미확인** → `discovery: false`, `default_models`로 수동 공급.
+- 대표 모델: `command-a-03-2025`(256K ctx), `command-r7b-12-2024`(경량, 128K ctx).
+  최신 플래그십 `command-a-plus-05-2026`/`North Mini Code 1.0`은 엔터프라이즈
+  문의 전용(`sales@cohere.com`)이라 카탈로그 기본 목록에서 제외.
+  출처: [models](https://docs.cohere.com/docs/models), [command-a](https://docs.cohere.com/docs/command-a), [rate-limits](https://docs.cohere.com/docs/rate-limits)
+- **가격 미확인**: `cohere.com/pricing` 공식 FAQ 페이지에는 레거시 모델(Command,
+  Command R/R+)만 명시돼 있고 현재 플래그십(Command A) 단가는 페이지 구조상 직접
+  확인 실패 — 3rd-party(OpenRouter 등)가 일관되게 인용하는 $2.50/$10.00은 1차
+  소스 대조가 안 돼 **카탈로그에 반영하지 않음**(litellm 폴백에 위임). 출처:
+  [pricing](https://cohere.com/pricing)
+- 코딩 벤치마크: 공식 테크리포트(arXiv 2504.00698)가 SWE-Bench 등을 사용했다고
+  명시하나 정확한 수치는 PDF 파싱 실패로 **미확인** → `capability_seed` 미부여.
+- 레이트리밋: Trial 20 req/min(전 모델 공통), Production 500 req/min(Command
+  A/R+/R/R7B). 무료 트라이얼은 크레딧이 아니라 요청 속도 제한 형태.
+
+### Together AI
+- `api_base`: `https://api.together.ai/v1`. `/v1/chat/completions`,
+  `GET /v1/models` 모두 OpenAI 포맷으로 공식 지원 확인 → discovery 기본값(true) 유지.
+  출처: [openai-api-compatibility](https://docs.together.ai/docs/openai-api-compatibility)
+- 인증: `Authorization: Bearer $TOGETHER_API_KEY`. 출처: [api-keys](https://docs.together.ai/docs/api-keys-authentication)
+- 가격(USD/1M tok): `deepseek-ai/DeepSeek-V4-Pro` $1.74(캐시 $0.20)/$3.48,
+  `moonshotai/Kimi-K2.7-Code` $0.95(캐시 $0.19)/$4.00, `Qwen/Qwen3.7-Plus`
+  $0.32/$1.28, `meta-llama/Llama-3.3-70B-Instruct-Turbo` $1.04/$1.04. 출처:
+  [serverless/models](https://docs.together.ai/docs/serverless/models)
+- `capability_seed`는 DeepSeek-V4-Pro만 시딩(SWE-bench Verified 80.6% / SWE-bench
+  Pro 55.4% / LiveCodeBench 93.5, 공식 HF 모델카드 대조 — NVIDIA 서빙판과 동일
+  모델, 위 2026-07-09 시드와 일관). 출처: [HF model card](https://huggingface.co/deepseek-ai/DeepSeek-V4-Pro)
+  나머지 모델은 discovery로 자동 등록되므로 별도 시드 불필요.
+- 무료 크레딧 없음 — 최소 $5 선불 필요(만료 없음). 고정 RPM 미공개(조직별 동적
+  한도). 출처: [billing](https://docs.together.ai/docs/billing-credits), [rate-limits](https://docs.together.ai/docs/rate-limits)
+
+### Fireworks AI
+- `api_base`: `https://api.fireworks.ai/inference/v1`, `/chat/completions` OpenAI
+  호환 확인. 모델 목록은 계정 스코프 관리 API(`GET /v1/accounts/{id}/models`,
+  스키마가 OpenAI `/models`와 다름)뿐이라 discovery **불가** 확정 →
+  `discovery: false`. 출처: [openai-compatibility](https://docs.fireworks.ai/tools-sdks/openai-compatibility), [list-models](https://docs.fireworks.ai/api-reference/list-models)
+- 인증: `Authorization: Bearer $FIREWORKS_API_KEY`. 출처: [quickstart](https://docs.fireworks.ai/getting-started/quickstart)
+- 가격/모델ID(USD/1M tok, 공식 모델 페이지):
+  `accounts/fireworks/models/deepseek-v4-pro` $1.74(캐시 $0.14)/$3.48, SWE-bench
+  Verified 80.6%; `accounts/fireworks/models/kimi-k2p6` $0.95(캐시 $0.16)/$4.00,
+  SWE-bench Verified 80.2%; `accounts/fireworks/models/qwen3p7-plus`
+  $0.40(캐시 $0.08)/$1.60, 코딩 벤치마크 미공개; `accounts/fireworks/models/glm-5p2`
+  $1.40(캐시 $0.26)/$4.40, GPQA-Diamond 91.4%(코딩 특화 지표 아님, "강력한
+  오픈소스 코딩 모델"은 Fireworks 자체 발표뿐). 출처: [deepseek-v4-pro](https://fireworks.ai/models/fireworks/deepseek-v4-pro), [kimi-k2p6](https://fireworks.ai/models/fireworks/kimi-k2p6), [qwen3p7-plus](https://fireworks.ai/models/fireworks/qwen3p7-plus), [glm-5p2](https://fireworks.ai/blog/glm-5p2)
+- SWE-bench 확인된 두 모델(deepseek-v4-pro, kimi-k2p6)만 tier1 + 전체
+  capabilities 시딩, qwen3p7-plus/glm-5p2는 가격만 시딩하고 tier/capabilities는
+  비워 tier3 기본값에 위임(벤치마크 근거 없이 지어내지 않음).
+- 레이트리밋: 결제수단 미등록 10 RPM, 등록+크레딧 보유 시 계정 전체 6,000 RPM(계정
+  단위 상한, serverless 전용 별도 한도 아님). 출처: [rate-limits](https://docs.fireworks.ai/guides/quotas_usage/rate-limits)
+- 무료 크레딧: 공식 문서에서 확인 못함, **미확인**(3차 매체의 "$1 크레딧" 주장은
+  채택하지 않음).
+
+### 카탈로그 반영 요약
+`PROVIDER_CATALOG`에 4개 항목 추가 + `capability_seed`에 `price_per_mtok` 선택
+필드 신설(`apply_auto_providers`가 `ModelOverride.price_per_mtok`까지 스레딩하도록
+확장 — 기존 tier/capabilities 스레딩과 동일 매커니즘). Bedrock/Azure OpenAI는
+`ProviderConfig` 계약이 안 맞아(AWS SigV4 자격증명 / api_version + 리소스별
+deployment 이름) 이번 라운드에서 제외 — 별도 스키마 확장 작업으로 분리(사용자
+결정 2026-07-10, [Plan.md](Plan.md) 참조).
+
+### 2026-07-10 — 실키 검증 (사용자 실제 계정)
+
+문서 조사만으로 "미확인"이었던 항목 중 일부를 사용자가 실제로 4개 프로바이더에
+가입하고 키를 발급받아 검증했다. `forge_gateway.settings.load_config` +
+`make_provider(...).list_models()`를 직접 호출해 확인(콘솔 출력이 아니라 파일에
+써서 확인 — 아래 로깅 이슈 때문에 콘솔 경로는 배제).
+
+- **Cohere discovery — 미확인 → 동작은 확인됐지만 의도적으로 off 유지**: `GET
+  https://api.cohere.ai/compatibility/v1/models`가 실키로 `200`, OpenAI 포맷
+  `{"object":"list","data":[{"id":"command-a-03-2025",...}, ...]}`을 반환,
+  forge의 discovery 경로로 실제 31개 모델 등록까지 확인됨. 그런데 그 31개 안에
+  `cohere-transcribe-03-2026`(음성 전사 모델)처럼 채팅 완성 요청을 받을 수 없는
+  모델이 섞여 있었다. forge는 4xx를 "클라이언트 요청 문제"로 간주해 failover
+  없이 그대로 반환하는 정책이라(§7 `UpstreamBadRequest`), 스케줄러가 우연히
+  이런 모델을 골라 코딩 요청을 라우팅하면 복구 없이 요청이 실패한다. 비율이
+  낮긴 하지만(31개 중 1개 ≈ 3%) 사용자가 위험을 감수하지 않기로 결정(2026-07-10)
+  — `discovery: false` 유지, `default_models`로 채팅 모델만 수동 큐레이션.
+- **x.ai 무료 크레딧 — 미확인 → 없음으로 확인**: 실키로 `GET /v1/models` 호출 시
+  `403 permission-denied`, 응답 바디 "Your newly created team doesn't have any
+  credits or licenses yet."(신규 팀에 크레딧 0, 구매 필요) — 신규가입 자동
+  무료크레딧이 없다는 사용자 보고와 일치. discovery 지원 여부는 이 응답으로는
+  검증 안 됨(권한 문제가 먼저 막음) — `discovery: false`는 유지.
+- **Fireworks 무료 크레딧 — 실제로 지급됨(~$6), 이후 계정 정지 → 해제됨**: 사용자가
+  가입 시 $6 크레딧을 실제로 받았다고 확인(공식 문서로는 못 찾았던 항목 — 사용자
+  실사용이 문서보다 정확한 사례, SambaNova 재검증과 같은 패턴). 처음엔 `412
+  precondition-failed`("Account ... is suspended, possibly due to reaching
+  the monthly spending limit or failure to pay past invoices")였으나 사용자가
+  결제 문제를 해결한 뒤 재확인: `list_models` 성공(7개 모델), 실제 `probe`(채팅
+  completion, max_tokens=1)도 `deepseek-v4-pro`로 성공(레이턴시 ~1.8초) — 연결과
+  실요청 경로 모두 검증 완료. **discovery는 실제로 동작함**(공식 문서에 없던
+  관리 API만 봐서 "불가"로 판단했던 게 틀렸음)이 확인됐지만, 반환된 7개 중
+  `flux-1-schnell-fp8`(이미지 생성)이 섞여 있어 Cohere보다 비율이 높다(7개 중
+  1개 ≈ 14%) — 같은 이유로 `discovery: false` 유지 결정(2026-07-10).
+- **Together AI — 미검증**: 사용자가 키를 발급받지 않음(최소 $5 선불 요구사항 때문
+  — 위 조사 내용과 일치). discovery/가격 설정은 문서 근거 그대로 유지.
+
+**교훈**: discovery가 "동작하는가"와 "채팅 라우팅에 안전한가"는 다른 질문이다 —
+OpenAI 호환 `/models`가 정상 포맷으로 응답해도, 프로바이더가 이미지/음성 등
+멀티모달 엔드포인트를 같은 목록에 섞어 노출하면 forge의 hard failover 예외
+정책(4xx는 복구 안 함)과 부딪힌다. discovery를 켤지 말지는 "포맷이 맞는가"뿐
+아니라 "그 목록이 순수 채팅 모델만인가"까지 확인해야 한다.
+
+**로깅 이슈(별개, 재현 실패)**: 첫 `forge doctor` 실행에서 `list_models` 경고
+로그가 `UnicodeEncodeError`로 깨져 실제 에러 내용이 가려지는 현상을 한 번
+관찰했다. 이후 `.env` 값을 정리하고 나서는 동일 호출을 여러 번 재현해도 다시
+발생하지 않았음 — 그 순간의 `.env` 값에 일시적으로 섞여 있던 비-ASCII 문자
+때문일 가능성이 높고, 결정적으로 재현하지는 못했다. 원인을 확정하지 못한 채로도
+`forge_gateway/server.py`의 로깅 설정에 `sys.stdout`/`sys.stderr`를
+`errors="backslashreplace"`로 재구성하는 방어 코드를 추가했다(`cli.py`의
+`main()`에 이미 있는 것과 동일 패턴을 서버 부팅 경로에도 적용) — 업스트림
+에러 메시지는 임의의 유니코드를 담을 수 있으므로, 인코딩 실패로 로그 자체가
+죽는 것보다는 이스케이프해서라도 보여주는 쪽이 안전하다.
+
+## 2026-07-11 — 속도 전면 실측 (사용자 요청: "무료 모델들은 너무 느려서 못 써먹겠다")
+
+배경: 신규 유료 프로바이더 모델 tier 분류를 하다가, 사용자가 "일단 기준을 속도로
+좀 잡을까"라고 제안. 코드 확인 결과 `scheduler.py::_score()`가 `capability_seed`의
+`speed` 필드를 아예 읽지 않는다는 걸 발견(dead data — task별로 code/debug/refactor/
+docs만 참조). 실제로 라우팅에 영향 주는 속도 요소는 `tier`(가중치 10%, 기본
+그룹 순서도 결정)와 실측 EWMA latency(가중치 15%, `>=2000ms`면 무조건 0점 — 2.1초와
+180초를 구분 못함) 둘뿐. forge.yaml에 이미 이 문제를 다룬 전례가 있었다(2026-07-09
+주석: "신호 기반 자동 계층화" — `tier`는 실력 순위로 유지하고 `default` 정책의
+`prefer` 순서로 속도를 따로 챙기는 방식). 사용자와 확인해 **기존 구조를 그대로
+확장**하기로 결정(tier 재정의 아님) — 새 프로바이더뿐 아니라 기존 무료 프로바이더
+(cerebras/gemini/sambanova)도 같이 재는 걸로 범위 확장.
+
+측정 방법: 실키가 있는 provider(cerebras/gemini/sambanova/fireworks/cohere)는
+`litellm.acompletion(..., stream=True)`로 직접 스트리밍 호출해 TTFT(첫 청크까지)와
+`content`/`reasoning_content` 글자 수를 따로 집계(콘텐츠 방출량으로 tok/s 근사,
+reasoning 토큰과 혼동 방지). 키가 없는 x.ai 개별 모델(Together는 이미 §2026-07-10
+"실키 검증"에서 위치 확인)과 Together는 Artificial Analysis(3rd-party 속도
+벤치마크)로 조사.
+
+### 실측 결과 (TTFT 기준 정렬)
+
+| 모델 | TTFT | 방식 | 비고 |
+| --- | --- | --- | --- |
+| nvidia:mistralai/mistral-small-4-119b-2603 (무료, tier3) | 0.4s | 실측(2026-07-09) | |
+| cohere:command-r7b-12-2024 (유료) | 0.27s | 실측 | 실제 콘텐츠 방출 |
+| cohere:command-a-03-2025 (유료) | 0.36s | 실측 | 실제 콘텐츠 방출, tok/s ~64 |
+| sambanova:gpt-oss-120b (무료) | 0.58s | 실측 | **reasoning-heavy — 120 토큰 예산 내 콘텐츠 0자** |
+| cerebras:gpt-oss-120b (무료) | 0.26s | 실측 | **reasoning-heavy — 콘텐츠 0자** |
+| cerebras:zai-glm-4.7 (무료, tier1 시드) | 0.88s | 실측 | **reasoning-heavy — 콘텐츠 0자** |
+| sambanova:DeepSeek-V3.1 (무료) | 0.67s | 실측 | 실제 콘텐츠 84자 방출 — 무료 중 최선 |
+| xai:grok-build-0.1 (유료) | ~0.52s | AA 3rd-party | tok/s 65.6~74.9 |
+| fireworks:kimi-k2p6/qwen3p7-plus/glm-5p2 (유료) | 0.50~2.14s | 실측 | **reasoning-heavy — 콘텐츠 거의 0** |
+| together:deepseek-ai/DeepSeek-V4-Pro (유료, high effort) | ~1.06s | AA 3rd-party | tok/s ~208, **같은 모델의 nvidia 무료판(18s)보다 17배 빠름** |
+| fireworks:deepseek-v4-pro (유료, tier1 시드) | 1.55s | 실측 | tok/s ~22, 콘텐츠 방출 확인 |
+| nvidia:nemotron-3-super-120b-a12b (무료, tier2) | 2.8s | 실측(2026-07-09) | |
+| nvidia:deepseek-v4-flash (무료, tier2) | 8.6s | 실측(2026-07-09) | |
+| xai:grok-4.5 (유료, tier1 시드) | 13.8~17.4s | AA 3rd-party | reasoning 오버헤드, tok/s ~89.5(도달 후) |
+| gemini:models/gemini-3-flash-preview (무료, tier1 시드) | **16.49s** | 실측 | **"Flash"인데 느림 — 신규 발견** |
+| gemini:models/gemini-3.5-flash (무료, tier2 시드) | **19.17s** | 실측 | tier가 낮은데 오히려 더 느림 |
+| nvidia:deepseek-ai/deepseek-v4-pro (무료, tier1) | 18s | 실측(2026-07-09) | |
+| nvidia:z-ai/glm-5.2 / qwen3.5-397b (무료, tier1) | 180s+ | 실측(2026-07-09) | 기존에 알던 최악 |
+| sambanova:MiniMax-M2.7 (무료 시드였으나) | 측정 불가 | 실측 | **결제수단 필요 에러로 완전히 막힘** — 자유 시드는 유효해도 지금은 호출 자체가 안 됨 |
+
+**교훈 1 — reasoning 모델의 TTFT는 체감 속도를 대표하지 못한다**: cerebras/sambanova의
+`gpt-oss-120b`, fireworks의 `kimi-k2p6`/`qwen3p7-plus`/`glm-5p2`는 TTFT가 0.5~1초로
+빨라 보이지만, 짧은 `max_tokens` 예산에서는 숨은 reasoning 토큰이 예산을 전부 먹어
+치워 사용자에게 보이는 답이 0자였다. "빠르다"를 TTFT 단독으로 판단하면 오판.
+**교훈 2 — 브랜드 이름과 실제 속도는 무관하다**: Gemini "Flash" 계열이 16~19초로,
+이름과 정반대로 이 카탈로그에서 두 번째로 느린 그룹에 속한다. **교훈 3 — 같은
+모델도 호스팅에 따라 속도가 완전히 다르다**: `deepseek-v4-pro`는 NVIDIA(무료)에서
+18초, Fireworks(유료)에서 1.55초, Together(유료)에서 ~1.06초 — 17배 차이.
+
+### 반영 (아키텍처는 그대로, prefer 순서만 확장 — 2026-07-11 사용자 결정)
+
+`tier` 라벨은 여전히 실력 순위(coding 벤치마크)이고, `default`/`heavy-work`/
+`hard-tasks` 정책의 `prefer` 순서만 위 실측을 반영해 확장했다(`forge.yaml`).
+사용자 결정: "무료를 먼저 다 쓰고, 안 되거나 느리면 유료 빠른 모델로" — 그래서:
+
+- **`default`**: 무료 중 빠른 것부터(mistral-small-4 → sambanova:DeepSeek-V3.1 →
+  nemotron-3-super → deepseek-v4-flash) 전부 소진한 뒤에만 유료 빠른 모델
+  (cohere:command-a-03-2025 → xai:grok-build-0.1 → fireworks:deepseek-v4-pro)로
+  넘어간다. glm-5.2/qwen3.5/gemini-3-flash/3.5-flash처럼 확인된 초저속 모델과
+  reasoning-heavy 모델들은 여기 넣지 않고 마지막 tier fallback에만 맡긴다(다른
+  후보가 전부 막혔을 때만 시도되는 안전망).
+- **`heavy-work`/`hard-tasks`**: 여전히 무료 `nvidia:deepseek-v4-pro`를 먼저 쓰고,
+  그게 쿨다운/장애일 때만 같은 모델의 유료 호스팅(`fireworks:deepseek-v4-pro`,
+  17배 빠름)으로 자동 전환 — 기본 요청 과금 정책은 안 바꾸고 복원력만 높였다.
+- **Together `deepseek-ai/DeepSeek-V4-Pro`는 데이터는 확보했지만 prefer에는
+  넣지 않았다** — 사용자 환경에 `TOGETHER_API_KEY`가 없어서 지금 넣으면 매 요청마다
+  "policy route item matches no tier/model" 경고만 반복된다. **Together 키가
+  생기면 세 정책 모두에 추가할 것** (실측 속도 최상위권이라 우선순위 높음).
+- **SambaNova `MiniMax-M2.7`**: capability_seed(모델 품질 시드)는 유지하지만 결제수단
+  없이는 호출이 막혀 실제로는 못 쓴다 — 사용자가 결제수단을 추가하기 전까지는
+  참고 정보로만 취급.
+
+### 후속: 동일 모델 tier 일관성 점검 (2026-07-11, 사용자 지적으로 발견)
+
+사용자가 "유료 모델 중 성능 좋은 것들은 tier1에 있어야 하는거 아니야?"라고 질문 —
+전체 capability_seed/forge.yaml을 "같은 모델이 여러 호스트에 있으면 tier가
+일치하는가" 기준으로 재점검했다. 모델 실력은 호스트가 바뀌어도 동일하고(속도만
+다름), 이미 확보한 벤치마크 근거를 다른 호스트 항목에 그대로 적용하지 않은 게
+있는지 확인.
+
+**발견한 불일치 1건**: `fireworks:accounts/fireworks/models/glm-5p2`(GLM-5.2)가
+`nvidia:z-ai/glm-5.2`(forge.yaml, tier1, SWE-Pro 62.1% 공식 z.ai 벤치마크)와 같은
+모델인데, Fireworks 리서치 당시 이 사실을 놓쳐서 코딩 벤치마크 "미확인"으로
+처리해 tier1이 아니라 기본값(tier3)에 있었다. 새 벤치마크를 지어내는 게 아니라
+**이미 이 프로젝트에서 확인·사용 중인 근거를 그대로 재적용**하는 수정이라 즉시
+반영 — `capability_seed`에 tier1 + nvidia와 동일한 capabilities 값 추가.
+
+**다른 중복 모델은 대조 결과 일관됨**: `gpt-oss-120b`(nvidia/cerebras/sambanova
+전부 tier2), `deepseek-v4-pro`(nvidia/together/fireworks 전부 tier1) — 문제 없음.
+`qwen3.5-397b-a17b` vs `qwen3p7-plus`, `MiniMax-M2.7` vs `minimax-m3`는 버전이
+달라(3.5≠3.7, M2.7≠M3) 강제 일치 대상이 아님. Cohere 모델들이 tier3(기본값)에
+있는 건 "확인 안 됨"의 시스템 공통 기본 취급이라 문제가 아님 — 실제 성능이
+나쁘다고 판정한 게 아니라, 나머지 100여 개 미시드 NVIDIA 모델과 동일하게 "아직
+벤치마크 근거가 없다"는 뜻. 속도는 tier와 무관하게 `default` 정책의 `prefer`
+목록이 이미 따로 챙기고 있음(위 섹션 참조).
+
+### 후속 2: 전체 tier 재검토 (2026-07-11, 사용자 요청 "모델들 다 검토해서 tier 수정해줘")
+
+**내가 이번에 새로 넣은 항목 안에서 발견한 것 (직접 수정)**:
+- `xai:grok-4.5` **tier1 → tier2**: 근거가 "xAI 자체 발표, 제3자 미검증"뿐인데,
+  같은 xai의 `grok-build-0.1`은 동일한 "독립 벤치마크 없음" 사유로 이미 tier2로
+  보수적으로 두고 있었다. 같은 프로바이더·같은 평가 근거 수준인데 하나만 tier1을
+  준 건 내 실수 — tier2로 일관화.
+- `together`/`fireworks`의 `deepseek-ai/DeepSeek-V4-Pro`(동일 모델) capabilities
+  `context` 값이 8/9로 미세하게 달랐음(복붙 과정에서 생긴 오차) — 9로 통일.
+
+**기존 NVIDIA 데이터(2026-07-09 세션) 중 사용자 확인 후 반영한 것**: 같은 지표
+(SWE-bench Verified)로 비교했을 때 tier1과 겹치는 세 항목을 tier1로 승격:
+- `nvidia:mistralai/mistral-medium-3.5-128b` (SWE-V 77.6%) — tier1인
+  `cerebras:zai-glm-4.7`(SWE-V 73.8%)·`gemini:gemini-3-flash-preview`(SWE-V 78%)와
+  같은 범위.
+- `nvidia:deepseek-ai/deepseek-v4-flash` (SWE-V ~76~78.4%) — 위와 동일 범위.
+- `gemini:models/gemini-3.5-flash` (SWE-bench Pro 55.1%, DeepMind 공식 모델카드) —
+  tier1인 `deepseek-v4-pro`(SWE-Pro 55.4%, 마찬가지로 공식 소스)와 사실상 동일.
+
+**의도적으로 건드리지 않은 것**:
+- `nvidia:minimaxai/minimax-m3`(SWE-Pro 59.0%, 원문 표기 "주장" — 자체 발표만이고
+  제3자 검증 없음)는 후보로 검토했으나 **제외** — grok-4.5를 tier2로 내린 것과
+  같은 기준(자체 발표만으로는 tier1 불충분)을 여기도 동일하게 적용해 tier2 유지.
+- `sambanova:MiniMax-M2.7`/`DeepSeek-V3.1`은 이미 위쪽 "조사 예정" 목록에 "2차
+  집계만으로 tier1 승격은 보류 중"이라고 명시적으로 유보돼 있던 항목이라 — 이건
+  누락이 아니라 이전 세션의 의도적 결정이라 그대로 유지.
+- Cohere(`command-a-03-2025` 등)는 여전히 capability_seed 없음 — 공식 기술
+  리포트(arXiv 2504.00698)에 코딩 벤치마크가 있는 건 확인했지만 PDF 파싱 실패로
+  수치 추출을 못한 상태 그대로. 이번 재검토 범위 밖(재조사 필요시 별도 작업).
+
+**부수 효과 인지**: `grok-4.5`가 tier2로 내려가면서 `default` 정책의 일반
+fallback(`[tier2, tier1, tier3]`)에서 tier2가 tier1보다 먼저 시도되는 순번에
+들어갔다 — prefer 목록의 7개 항목이 전부 쿨다운/장애일 때만 도달하는 드문
+경로지만, 그 시점엔 grok-4.5가 아직 실측 latency가 없어(신규 등록 시 latency
+5.0 중립값) capability 점수만으로 경쟁해 한동안 뽑힐 수 있다 — 실제 트래픽이
+쌓이면 EWMA latency가 자연히 그 자리를 밀어낼 것으로 예상(자가 보정, §5.11-3
+학습 루프와는 별개로 `_score()`의 latency 항 자체가 처리).
+
 ## 조사 예정
 
 - [ ] litellm SDK의 `stream_options` / usage 청크 동작 방식 (M1-6 착수 전)

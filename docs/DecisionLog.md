@@ -54,3 +54,62 @@
 ## 2026-07-09 — NVIDIA 무료 티어 RPM 한도 40 확인
 
 **결정**: 선제 스로틀링(§5.13) 기본값 `rpm: 40` — 사용자 실측 확인값.
+
+## 2026-07-11 — 속도 라우팅: `tier` 재정의 대신 정책 `prefer` 확장
+
+**결정**: 무료 모델이 너무 느리다는 사용자 피드백에 `tier`(실력 순위) 자체를 속도
+기준으로 재정의하지 않고, 기존에 이미 있던 방식(`forge.yaml`의 `default` 정책이
+빠른 모델을 `prefer`로 따로 우선시키는 2026-07-09 전례)을 그대로 확장하기로
+결정. `default`/`heavy-work`/`hard-tasks` 세 정책의 `prefer` 순서를 실측
+TTFT(2026-07-11, docs/Research.md 참조)로 갱신 — cerebras/gemini/sambanova/
+cohere/fireworks/x.ai를 포함해 전 프로바이더 실측. `default`는 "무료 먼저 다
+쓰고 안 되거나 느리면 유료 빠른 모델로" 순서(사용자 확정), `heavy-work`/
+`hard-tasks`는 여전히 무료 `nvidia:deepseek-v4-pro`를 우선하고 유료 고속 호스팅은
+쿨다운 시 대체용으로만 추가.
+
+**이유**: `tier`를 속도로 재정의하면 `hard-tasks`/`heavy-work` 정책이 명시적으로
+"느려도 강한 모델을 쓴다"는 의도로 tier1(v4-pro 등)을 지정해둔 것과 의미가
+충돌한다. 반면 정책 `prefer` 확장은 기존 설계 의도(실력=tier, 속도=정책)를
+그대로 유지하면서 새 데이터만 반영하는 최소 변경이라 리스크가 작다.
+
+**부수 발견**:
+- `scheduler.py::_score()`가 `capability_seed`의 `speed` 필드를 전혀 읽지
+  않는다는 걸 확인(dead data) — 실제 속도 반영 경로는 `tier` 가중치(10%)와
+  실측 EWMA latency(15%, 2초 이상은 전부 0점이라 "다소 느림"과 "치명적으로
+  느림"을 구분 못함)뿐. 이번엔 `prefer` 순서로 우회했지만, `speed`를 스코어링에
+  실제로 반영하거나 latency 스코어 구간을 세분화하는 건 별도 개선 과제로 남음.
+- Gemini "Flash" 계열(gemini-3-flash-preview/3.5-flash)이 실측 TTFT 16~19초로
+  이름과 무관하게 느림 — 기존엔 몰랐던 사실.
+- `deepseek-v4-pro`는 NVIDIA(무료) 18초 vs Fireworks/Together(유료) 1~1.5초 —
+  같은 모델도 호스팅에 따라 속도가 10배 이상 차이 날 수 있음이 실측으로 확인됨.
+
+## 2026-07-11 — tier 전면 재검토: "자체 발표만"은 tier1 불충분 기준 확정
+
+**결정**: 사용자 요청("모델들 다 검토해서 tier 수정해줘")으로 capability_seed/
+forge.yaml 전체를 재검토. **평가 근거 기준을 명시적으로 확정**: 제조사 자체
+발표(공식 블로그/보도자료)뿐이고 제3자 검증이 없는 벤치마크 수치는 tier1의
+충분조건이 아니다 — 최소한 공식 모델카드(방법론이 문서화된 형태)나 독립
+리더보드 수치가 있어야 tier1. 이 기준으로 `xai:grok-4.5`(SWE-Pro 64.7%, 자체
+발표뿐)를 tier1→tier2로, `nvidia:minimaxai/minimax-m3`(SWE-Pro 59.0%, 마찬가지로
+자체 발표뿐)는 후보였으나 tier2 유지로 확정.
+
+같은 지표(SWE-bench Verified 또는 Pro)로 직접 비교 가능하고 양쪽 다 공식
+소스인 경우는 tier1로 승격: `mistral-medium-3.5`/`deepseek-v4-flash`(SWE-V,
+기존 tier1 범위와 겹침), `gemini-3.5-flash`(SWE-Pro, tier1 deepseek-v4-pro와
+사실상 동일) — 사용자 확인.
+
+**이유**: 이전 세션들에서 같은 종류의 근거(자체 발표만)를 어떤 모델엔 관대하게
+(grok-4.5 tier1), 어떤 모델엔 엄격하게(minimax-m3 tier2 유지) 적용해 일관성이
+없었다. 기준을 명문화해두면 다음에 새 모델을 추가할 때마다 이 질문을 반복하지
+않아도 된다.
+
+**건드리지 않은 것**: `sambanova:MiniMax-M2.7`/`DeepSeek-V3.1`은 Research.md
+"조사 예정"에 이미 "2차 집계만으로 tier1 승격 보류 중"이라고 명시된 기존
+결정이라 그대로 유지(누락이 아니라 확인된 보류).
+
+**부수 리스크**: `grok-4.5`가 tier2로 내려가면서 `default` 정책의 fallback
+`[tier2, tier1, tier3]` 순서상 tier1보다 먼저 시도되는 풀에 들어갔다 — prefer
+목록이 전부 막혔을 때만 도달하는 드문 경로지만, 신규 등록 모델은 실측 latency가
+없어 중립값(5.0)으로 시작해 한동안 capability 점수만으로 경쟁할 수 있음.
+실트래픽이 쌓이면 EWMA latency가 자연히 보정할 것으로 예상 — 별도 조치는
+하지 않고 관찰만 하기로 함.

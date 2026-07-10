@@ -6,6 +6,7 @@
 
 import asyncio
 import logging
+import sys
 from contextlib import asynccontextmanager
 from importlib.metadata import PackageNotFoundError, version as _pkg_version
 
@@ -36,6 +37,12 @@ logging.basicConfig(
     format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
 )
+# 업스트림 에러 메시지는 임의의 유니코드를 담을 수 있다 - Windows 콘솔(cp949/ascii 등
+# 좁은 코드페이지)에서 로그에 그 문자가 그대로 찍히면 UnicodeEncodeError로 로그 자체가
+# 죽어 진짜 에러 내용이 가려진다. 인코딩 실패는 예외 대신 이스케이프로 대체.
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(errors="backslashreplace")
 logger = logging.getLogger("forge")
 
 

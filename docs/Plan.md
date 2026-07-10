@@ -98,6 +98,68 @@
 > PostgreSQL/Redis/멀티 API 키 로테이션은 여전히 DESIGN.md §10 기준 "보류"(단일
 > 로컬 사용자 배포에는 불필요) — "공개 오픈소스로 내놓기" 기준 격차는 이번 점검으로 해소.
 
+### M3 후속: 유료 프로바이더 카탈로그 확장 (진행중)
+
+배경: 사용자 요청 — "다른 유료 API 프로바이더들도 다 인식 가능하도록, x.ai라던지" (2026-07-10
+대화). 목적은 포괄적 카탈로그 구축(사용자 확인) — 무료 티어 확장과 달리 실제 과금이
+걸리므로 가격은 **공식 pricing 페이지 근거로 직접 시딩**하기로 결정(litellm 내장
+가격표 신뢰 대신, 사용자 확인) — 근거는 [Research.md](Research.md) 2026-07-10 참조.
+진행 방식: 브랜치 `feat/paid-provider-catalog` → PR → squash merge.
+
+AWS Bedrock/Azure OpenAI는 이번 라운드에서 **제외**(사용자 결정, 2026-07-10) — 둘 다
+`ProviderConfig`의 "단일 API 키 + api_base" 계약에 안 맞음(Bedrock은 AWS SigV4 3종
+자격증명, Azure는 리소스별 커스텀 deployment 이름 + `api_version`이 필요해 카탈로그
+자동등록 자체가 구조적으로 어려움). 스키마 확장은 별도 작업으로 분리.
+
+| # | 작업 | 근거 | 상태 |
+| --- | --- | --- | --- |
+| P1 | `PROVIDER_CATALOG`에 x.ai/Cohere/Together AI/Fireworks AI 추가 — 전부 OpenAI 호환 단일 API 키 패턴(기존 groq/mistral/deepseek와 동일 계약) | Research.md 2026-07-10 | 완료 |
+| P2 | `capability_seed`에 `price_per_mtok` 필드 신설 — `apply_auto_providers`가 `ModelOverride.price_per_mtok`까지 스레딩하도록 확장(§5.12 가격 우선순위 1번 경로를 자동등록 모델에도 적용, 기존 tier/capabilities 스레딩과 같은 매커니즘) | — | 완료 |
+| P3 | 가격/벤치마크를 공식 1차 소스로 확인 못한 항목(Cohere 전체, Fireworks의 Qwen3.7-Plus/GLM-5.2)은 `capability_seed`를 비우거나 가격만 채우고 tier/capabilities는 비워 litellm 폴백·tier3 기본값에 위임 — 없는 근거를 만들어내지 않음 | Research.md 2026-07-10 | 완료 |
+| P4 | `.env.example` / README.md "Adding a provider is just an API key" 목록 / CHANGELOG.md 갱신 | — | 완료 |
+| P5 | 카탈로그 확장 회귀 테스트 (`test_settings.py`) | — | 완료 |
+| P6 | (별도 작업으로 분리) AWS Bedrock/Azure OpenAI — `ProviderConfig`에 `api_version`, AWS 자격증명 관련 필드 확장 필요. 스키마 계약 자체가 걸린 결정이라 이번 라운드에는 포함하지 않음 | 사용자 결정 2026-07-10 | 보류 |
+| P7 | 사용자 실키로 x.ai/Cohere/Fireworks 검증. Cohere/Fireworks 둘 다 discovery가 실제로 동작함을 확인했으나, 반환 목록에 채팅 불가 모달(Cohere: 음성 전사, Fireworks: 이미지 생성)이 섞여 있어 4xx-no-failover 정책과 부딪히는 위험을 확인 → 사용자 결정으로 둘 다 `discovery: false` 유지, 채팅 모델만 수동 큐레이션. Fireworks는 계정 정지도 해결돼 실제 채팅 요청(probe)까지 성공 확인. x.ai는 계정에 크레딧 0(구매 필요)까지 확인. Together는 $5 선불 부담으로 미검증 | Research.md 2026-07-10 "실키 검증" | 완료(검증 가능한 한도까지) |
+| P8 | `server.py` 로깅에 Windows 콘솔 유니코드 크래시 방어 추가(`cli.py`에 이미 있던 패턴을 서버 부팅 경로에도 적용) — 근본 원인은 재현 실패로 미확정 | WorkLog.md 2026-07-10 | 완료 |
+
+완료 기준: 4개 신규 프로바이더가 `forge doctor`/`forge models`에 인식되고, 공식 소스로
+확인된 가격이 `/v1/models`·비용 계산에 정확히 반영되며, 전체 테스트 통과.
+
+> **진행 상태** (2026-07-10): P1-P8 완료. Fireworks는 실제 채팅 요청까지 성공 검증(연결 +
+> 계정 상태 + 실요청 전부 확인). x.ai는 연결은 되지만 계정 크레딧 0(구매 필요). Together
+> AI는 $5 선불 요구사항으로 사용자가 키를 만들지 않아 미검증. Cohere/Fireworks 모두
+> discovery는 동작하지만 비채팅 모달 혼입 위험 때문에 의도적으로 꺼둔 상태 유지.
+
+### M3 후속: 속도 기반 라우팅 정책 확장 (완료 — 2026-07-11)
+
+배경: 사용자 피드백 — "무료 모델들은 너무 느려서 거의 못써먹겠던데, 신규 모델도
+tier 분류할 때 기준을 속도로 잡을까?" `scheduler.py::_score()`를 확인해보니
+`capability_seed`의 `speed` 필드가 dead data임을 발견 — tier(10%)와 실측
+latency(15%, 2초 이상은 전부 0점)만 실제로 속도에 영향. `tier`를 속도로 재정의하는
+대신, 기존 전례(`default` 정책의 `prefer`로 속도를 별도 처리)를 확장하기로 사용자와
+결정(DecisionLog.md 2026-07-11 참조). 범위는 신규 유료 4개뿐 아니라 기존 무료
+프로바이더(nvidia/cerebras/gemini/sambanova)까지 포함하기로 사용자가 확장.
+
+| # | 작업 | 근거 | 상태 |
+| --- | --- | --- | --- |
+| S1 | Cerebras/Gemini/SambaNova의 capability_seed 모델을 실키로 직접 스트리밍 호출해 TTFT + content/reasoning 글자 수 측정(reasoning 토큰과 혼동 방지) | Research.md 2026-07-11 | 완료 |
+| S2 | x.ai(grok-4.5/grok-build-0.1), Together(deepseek-v4-pro) 속도는 실키가 없어 Artificial Analysis 3rd-party 벤치마크로 조사 | Research.md 2026-07-11 | 완료 |
+| S3 | `forge.yaml`의 `default`/`heavy-work`/`hard-tasks` 정책 `prefer` 순서를 실측 데이터로 재작성. `default`는 "무료 먼저, 안 되거나 느리면 유료 빠른 모델로"(사용자 확정), `heavy-work`/`hard-tasks`는 무료 v4-pro 우선 유지 + 유료 고속 호스팅을 쿨다운 대체용으로 추가 | DecisionLog.md 2026-07-11 | 완료 |
+| S4 | Together는 사용자 환경에 키가 없어 정책에 넣으면 매 요청마다 경고만 반복 — 데이터는 문서화하되 실제 prefer 목록에는 미포함(키 생기면 추가) | Research.md 2026-07-11 | 완료(의도적 보류) |
+| S5 | `PolicyEngine.plan()`을 직접 호출해 새 prefer 목록이 경고 없이 전부 실제 등록 모델로 resolve되는지 확인(`default`/`heavy-work`/`hard-tasks` 전부) | — | 완료 |
+| S6 | 사용자 질문("정책상 사용하면서 점점 위로 올라오나?")에 답하려고 `tuner.py` 확인 — tier는 학습 루프가 안 건드리고, capability만 ±2(상향은 +1) 클램프로 보정됨을 확인·설명 | WorkLog.md 2026-07-11 | 완료 |
+| S7 | 전체 capability_seed/forge.yaml을 "같은 모델이 여러 호스트에 있으면 tier 일치하는가" + "같은 지표로 비교 가능한가" 기준으로 전면 재검토(사용자 요청) — `xai:grok-4.5` tier1→tier2(형제 모델과 근거 수준 불일치 수정), together/fireworks의 deepseek-v4-pro capabilities 통일 | Research.md/DecisionLog.md 2026-07-11 | 완료 |
+| S8 | 기존 NVIDIA 데이터 중 같은 지표로 tier1과 겹치는 3개(mistral-medium-3.5/deepseek-v4-flash: SWE-V, gemini-3.5-flash: SWE-Pro)를 사용자 확인 후 tier1로 승격. minimax-m3(자체 발표만)는 grok-4.5와 같은 기준으로 제외, sambanova의 기존 보류 항목은 그대로 유지 | DecisionLog.md 2026-07-11 | 완료 |
+
+완료 기준: 세 정책의 `prefer` 목록이 실측 속도 순서를 반영하고, 경고 없이 전부
+resolve되며, 전체 테스트 통과. tier 평가 기준(자체 발표만은 tier1 불충분)이
+명문화되어 다음 신규 모델 추가 시 재사용 가능.
+
+> **완료** (2026-07-11): Gemini "Flash" 계열이 실측 TTFT 16~19초로 이름과 무관하게
+> 느리다는 것과, `deepseek-v4-pro`가 NVIDIA(무료·18초) 대비 Fireworks/Together(유료)
+> 에서 10배 이상 빠르다는 게 이번에 새로 확인됨. `speed` 필드를 실제 스코어링에
+> 반영하거나 latency 스코어 구간을 세분화하는 건 별도 개선 과제로 남김(DecisionLog 참조).
+
 > **M2.5 완료** (2026-07-09): 전체 153건 테스트 3회 연속 통과, editable install + `forge` CLI 동작.
 > **다음: 사용자 통합 검증** — 실키(NVIDIA)로 `forge doctor`/`forge start` + Cline(OpenAI) +
 > Claude Code(`ANTHROPIC_BASE_URL`) 실연동. 검증 후 M3(Dashboard, Prometheus, PostgreSQL) 착수.
