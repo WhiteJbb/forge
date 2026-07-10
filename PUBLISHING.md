@@ -1,6 +1,7 @@
 # PyPI 패키지명 등록 가이드
 
-> ✅ **등록 완료 (2026-07-09)** — `forge-gateway 0.3.0.dev0` 업로드됨: https://pypi.org/project/forge-gateway/
+> ✅ **등록 완료 (2026-07-09)**, **첫 정식 릴리스 완료 (2026-07-11)** — `forge-gateway 0.3.0`
+> 업로드됨(`v0.3.0` 태그): https://pypi.org/project/forge-gateway/
 > 이 문서는 이후 릴리스 업로드 절차의 참고용으로 유지한다.
 > 배경: [DESIGN.md](DESIGN.md) §8.1 — PyPI 조회 결과(2026-07) `forge-gateway` 가용 확인, 조기 등록 권장.
 
