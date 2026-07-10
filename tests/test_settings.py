@@ -336,7 +336,7 @@ class AutoProviderTests(unittest.TestCase):
         config = self._load(VALID_YAML)
         override = next((m for m in config.models if m.id == "xai:grok-4.5"), None)
         self.assertIsNotNone(override)
-        self.assertEqual(override.tier, "tier1")
+        self.assertEqual(override.tier, "tier2")
         self.assertEqual(override.price_per_mtok, (2.00, 6.00))
 
     def test_capability_seed_price_only_leaves_tier_unset(self):

@@ -329,9 +329,11 @@ PROVIDER_CATALOG: "list[dict]" = [
              "capabilities": {"code": 9, "debug": 9, "refactor": 9,
                               "docs": 8, "context": 8, "speed": 9}},
          # SWE-bench Pro(Public) 55.1%, Terminal-bench 2.1 76.2% (DeepMind 공식
-         # 모델카드) — Stable
+         # 모델카드) — Stable. tier2 -> tier1: 같은 지표(SWE-bench Pro)로 tier1인
+         # deepseek-v4-pro(55.4%, 동일하게 공식 소스)와 사실상 동일 — 사용자 확인
+         # (2026-07-11 전체 tier 재검토)
          "models/gemini-3.5-flash": {
-             "tier": "tier2",
+             "tier": "tier1",
              "capabilities": {"code": 8, "debug": 8, "refactor": 8,
                               "docs": 8, "context": 8, "speed": 9}},
      }},
@@ -351,8 +353,11 @@ PROVIDER_CATALOG: "list[dict]" = [
      # discovery 지원 여부 미확인이라 보수적으로 off
      "discovery": False,
      "capability_seed": {
-         # xAI 자체 발표 SWE-bench Pro 64.7%(제3자 미검증, 참고용) — 플래그십, context 500K
-         "grok-4.5": {"tier": "tier1",
+         # xAI 자체 발표 SWE-bench Pro 64.7%(제3자 미검증, 참고용) — 플래그십, context 500K.
+         # tier1이었으나 같은 xai:grok-build-0.1이 "독립 벤치마크 없음"으로 tier2 받은
+         # 것과 동일한 근거 수준(자체 발표뿐, 제3자 미검증)인데 여기만 tier1을 줬던 게
+         # 일관성 오류 — tier2로 정정 (2026-07-11, 전체 tier 재검토)
+         "grok-4.5": {"tier": "tier2",
                       "capabilities": {"code": 9, "debug": 8, "refactor": 8,
                                        "docs": 8, "context": 9, "speed": 7},
                       "price_per_mtok": [2.00, 6.00]},
@@ -381,7 +386,7 @@ PROVIDER_CATALOG: "list[dict]" = [
          # SWE-bench Verified 80.6% / SWE-bench Pro 55.4% / LiveCodeBench 93.5 (공식 HF 모델카드)
          "deepseek-ai/DeepSeek-V4-Pro": {"tier": "tier1",
                                          "capabilities": {"code": 10, "debug": 9, "refactor": 9,
-                                                          "docs": 8, "context": 8, "speed": 7},
+                                                          "docs": 8, "context": 9, "speed": 7},
                                          "price_per_mtok": [1.74, 3.48]},
      }},
     {"name": "fireworks", "key_env": "FIREWORKS_API_KEY",

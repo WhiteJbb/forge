@@ -45,10 +45,13 @@ models:
     tier: tier2
     capabilities: { code: 9, debug: 8, refactor: 8, docs: 8, context: 9, speed: 7 }
   - id: "nvidia:mistralai/mistral-medium-3.5-128b"  # SWE-V 77.6% (Devstral 2 능가), 256K ctx
-    tier: tier2
+    # tier2 -> tier1: 같은 SWE-V 지표로 tier1인 zai-glm-4.7(73.8%)/gemini-3-flash-preview(78%)와
+    # 동일 범위 — 사용자 확인(2026-07-11 전체 tier 재검토)
+    tier: tier1
     capabilities: { code: 9, debug: 8, refactor: 8, docs: 8, context: 9, speed: 9 }
   - id: "nvidia:deepseek-ai/deepseek-v4-flash"      # SWE-V ~78%
-    tier: tier2
+    # tier2 -> tier1: 같은 SWE-V 지표로 tier1 범위(73.8~80.6%)와 겹침 — 사용자 확인(2026-07-11)
+    tier: tier1
     capabilities: { code: 9, debug: 8, refactor: 8, docs: 7, context: 8, speed: 10 }
   - id: "nvidia:nvidia/nemotron-3-super-120b-a12b"  # LCB 81.2 / SWE-V 60.5%
     tier: tier2

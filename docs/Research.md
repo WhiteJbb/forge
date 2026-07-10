@@ -437,6 +437,44 @@ reasoning 토큰과 혼동 방지). 키가 없는 x.ai 개별 모델(Together는
 벤치마크 근거가 없다"는 뜻. 속도는 tier와 무관하게 `default` 정책의 `prefer`
 목록이 이미 따로 챙기고 있음(위 섹션 참조).
 
+### 후속 2: 전체 tier 재검토 (2026-07-11, 사용자 요청 "모델들 다 검토해서 tier 수정해줘")
+
+**내가 이번에 새로 넣은 항목 안에서 발견한 것 (직접 수정)**:
+- `xai:grok-4.5` **tier1 → tier2**: 근거가 "xAI 자체 발표, 제3자 미검증"뿐인데,
+  같은 xai의 `grok-build-0.1`은 동일한 "독립 벤치마크 없음" 사유로 이미 tier2로
+  보수적으로 두고 있었다. 같은 프로바이더·같은 평가 근거 수준인데 하나만 tier1을
+  준 건 내 실수 — tier2로 일관화.
+- `together`/`fireworks`의 `deepseek-ai/DeepSeek-V4-Pro`(동일 모델) capabilities
+  `context` 값이 8/9로 미세하게 달랐음(복붙 과정에서 생긴 오차) — 9로 통일.
+
+**기존 NVIDIA 데이터(2026-07-09 세션) 중 사용자 확인 후 반영한 것**: 같은 지표
+(SWE-bench Verified)로 비교했을 때 tier1과 겹치는 세 항목을 tier1로 승격:
+- `nvidia:mistralai/mistral-medium-3.5-128b` (SWE-V 77.6%) — tier1인
+  `cerebras:zai-glm-4.7`(SWE-V 73.8%)·`gemini:gemini-3-flash-preview`(SWE-V 78%)와
+  같은 범위.
+- `nvidia:deepseek-ai/deepseek-v4-flash` (SWE-V ~76~78.4%) — 위와 동일 범위.
+- `gemini:models/gemini-3.5-flash` (SWE-bench Pro 55.1%, DeepMind 공식 모델카드) —
+  tier1인 `deepseek-v4-pro`(SWE-Pro 55.4%, 마찬가지로 공식 소스)와 사실상 동일.
+
+**의도적으로 건드리지 않은 것**:
+- `nvidia:minimaxai/minimax-m3`(SWE-Pro 59.0%, 원문 표기 "주장" — 자체 발표만이고
+  제3자 검증 없음)는 후보로 검토했으나 **제외** — grok-4.5를 tier2로 내린 것과
+  같은 기준(자체 발표만으로는 tier1 불충분)을 여기도 동일하게 적용해 tier2 유지.
+- `sambanova:MiniMax-M2.7`/`DeepSeek-V3.1`은 이미 위쪽 "조사 예정" 목록에 "2차
+  집계만으로 tier1 승격은 보류 중"이라고 명시적으로 유보돼 있던 항목이라 — 이건
+  누락이 아니라 이전 세션의 의도적 결정이라 그대로 유지.
+- Cohere(`command-a-03-2025` 등)는 여전히 capability_seed 없음 — 공식 기술
+  리포트(arXiv 2504.00698)에 코딩 벤치마크가 있는 건 확인했지만 PDF 파싱 실패로
+  수치 추출을 못한 상태 그대로. 이번 재검토 범위 밖(재조사 필요시 별도 작업).
+
+**부수 효과 인지**: `grok-4.5`가 tier2로 내려가면서 `default` 정책의 일반
+fallback(`[tier2, tier1, tier3]`)에서 tier2가 tier1보다 먼저 시도되는 순번에
+들어갔다 — prefer 목록의 7개 항목이 전부 쿨다운/장애일 때만 도달하는 드문
+경로지만, 그 시점엔 grok-4.5가 아직 실측 latency가 없어(신규 등록 시 latency
+5.0 중립값) capability 점수만으로 경쟁해 한동안 뽑힐 수 있다 — 실제 트래픽이
+쌓이면 EWMA latency가 자연히 그 자리를 밀어낼 것으로 예상(자가 보정, §5.11-3
+학습 루프와는 별개로 `_score()`의 latency 항 자체가 처리).
+
 ## 조사 예정
 
 - [ ] litellm SDK의 `stream_options` / usage 청크 동작 방식 (M1-6 착수 전)

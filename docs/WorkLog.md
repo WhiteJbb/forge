@@ -86,6 +86,49 @@
   실제 트래픽 기반으로 보정하겠지만, 지금은 정책 `prefer` 순서가 이 1회 샘플에
   의존하고 있다는 한계는 남아있음.
 
+### 후속: "정책상 사용하면서 tier가 올라가나?" 질문에 답하려고 tuner.py 확인
+
+사용자가 "그럼 정책상 사용하면서 점점 위로 올라오나?"라고 질문. `tuner.py`를
+읽고 정확히 답함: `prefer` 목록 순서는 정적 YAML이라 실사용으로 재배열되지
+않는다. 별도로 있는 학습 루프(`CapabilityTuner`)는 `tier`가 아니라 task별
+`capability_adjustments`만 ±2 클램프(상향은 +1로 더 보수적)로 건드리고, 그마저도
+표본 5개 이상(`min_samples`) 쌓여야 작동 — tier 자체가 승격되는 경로는 코드에
+없음을 확인.
+
+### 후속: "성능·속도 좋은 유료 모델은 tier1에 있어야 하지 않냐" → 전체 tier 재검토
+
+사용자 지적에 답하다가 실제 불일치를 하나 발견(`fireworks:glm-5p2`가
+`nvidia:z-ai/glm-5.2`와 같은 모델인데 tier1 누락 — 별도 커밋으로 즉시 수정,
+위 커밋 로그 참조) 후, 사용자가 "모델들 다 검토해서 tier 수정해줘"라고 요청해
+전체 재검토 진행.
+
+- **내가 새로 넣은 항목 안에서 발견한 것**: `xai:grok-4.5`(자체 발표만, 제3자
+  미검증)가 형제 모델 `grok-build-0.1`(동일 근거 수준으로 tier2)과 다르게
+  tier1을 받고 있던 걸 발견 — tier2로 정정. `together`/`fireworks`의
+  `deepseek-v4-pro` capabilities `context` 값이 8/9로 미세하게 어긋나 있던 것도
+  9로 통일.
+- **기존 NVIDIA 데이터(2026-07-09 세션) 재검토**: 이 세션의 전체 판단 맥락을
+  다 알 수 없어서 함부로 건드리지 않기로 하고, 사용자에게 먼저 후보를 보여줌.
+  같은 지표(SWE-bench Verified/Pro)로 직접 비교 가능하고 tier1 범위와 겹치는
+  세 개(`mistral-medium-3.5`, `deepseek-v4-flash`, `gemini-3.5-flash`)를 사용자
+  확인 후 tier1로 승격. `minimax-m3`(자체 발표만)는 grok-4.5와 같은 기준으로
+  후보에서 제외, tier2 유지.
+- **건드리지 않은 것**: `sambanova:MiniMax-M2.7`/`DeepSeek-V3.1`은 Research.md에
+  이미 "2차 집계만으로 tier1 승격 보류 중"이라고 명시돼 있던 기존 결정이라
+  그대로 유지 — 누락이 아니라 확인된 보류임을 재확인.
+- 평가 기준을 명문화(DecisionLog.md 참조): "제조사 자체 발표뿐, 제3자 미검증"인
+  벤치마크는 tier1 불충분 — 이전엔 이 기준을 모델마다 다르게 적용했던 게
+  일관성 문제의 원인이었음.
+- `tests/test_settings.py`의 grok-4.5 tier 기대값을 tier1→tier2로 갱신. 전체
+  테스트 235건 재실행 통과. `PolicyEngine.plan()`으로 tier 풀 재확인(승격된
+  3개가 tier1 그룹에, grok-4.5가 tier2 그룹에 정확히 반영됨).
+
+**부수 리스크 인지**: grok-4.5가 tier2로 내려가면서 `default` 정책의 일반
+fallback(`[tier2, tier1, tier3]`, tier2가 먼저 시도됨) 풀에 들어갔다 — prefer
+목록 7개가 전부 막혔을 때만 도달하는 드문 경로지만, 신규 등록이라 실측
+latency가 없어 중립값(5.0)으로 시작해 한동안 capability 점수만으로 뽑힐 수
+있음. 실트래픽이 쌓이면 EWMA가 자연히 보정할 것으로 보고 별도 조치는 안 함.
+
 ---
 
 ## 2026-07-10 — 유료 프로바이더 카탈로그 확장 (feat/paid-provider-catalog)
