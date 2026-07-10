@@ -7,6 +7,8 @@ pre-1.0 (see [DESIGN.md](DESIGN.md) for the milestone plan); versioning is not y
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-07-11
+
 ### Added
 
 - **M1 — Foundation**: `forge.yaml` config schema/loader, Provider protocol + LiteLLM SDK adapter,
@@ -53,6 +55,22 @@ pre-1.0 (see [DESIGN.md](DESIGN.md) for the milestone plan); versioning is not y
   registered without a seed and fall back to LiteLLM's cost table or `unknown`. AWS Bedrock and
   Azure OpenAI were evaluated but excluded — both need per-resource credentials/config that don't
   fit the single-API-key catalog pattern.
+- Speed-aware routing: the `default`/`heavy-work`/`hard-tasks` policies' `prefer` order now
+  reflects real measured TTFT across every registered provider (free and paid), not just NVIDIA.
+  `default` exhausts fast free options before trying fast paid ones; `heavy-work`/`hard-tasks`
+  still prefer the free `deepseek-v4-pro` and only fall back to its much faster paid hosts
+  (Fireworks/Together, ~1-1.5s vs NVIDIA's ~18s) when it's unavailable. See Research.md for the
+  full TTFT table and the `capability_seed.speed` field's dead-code finding that motivated this.
+
+### Changed
+
+- Tier consistency review across the whole catalog: `xai:grok-4.5` demoted tier1→tier2 (its
+  benchmark is a self-reported, third-party-unverified claim — the same evidentiary bar that
+  already kept its sibling `grok-build-0.1` at tier2), and `fireworks:glm-5p2` promoted to tier1
+  after realizing it's the same model as the already-tier1 `nvidia:z-ai/glm-5.2`. Three existing
+  NVIDIA entries (`mistral-medium-3.5`, `deepseek-v4-flash`, and Gemini's `gemini-3.5-flash`)
+  promoted to tier1 where their official benchmark numbers directly overlap the existing tier1
+  range on the same metric. See DecisionLog.md for the evidentiary standard this establishes.
 
 ### Fixed
 
