@@ -58,6 +58,27 @@ Fireworks만, Bedrock/Azure는 별도 작업으로 미룬다"를 선택.
 4. **`tests/test_settings.py`**: 신규 프로바이더 자동등록, Cohere의 무시드
    등록, Together discovery 유지, `price_per_mtok` 스레딩(전체 시드/가격만
    시드 두 경우 모두) 검증 테스트 5건 추가. 전체 235건 통과.
+5. **실키 검증 (사용자가 4개 중 3개에 가입해서 키 제공, Together는 $5 선불
+   요구사항 때문에 스킵)** — `forge doctor`로 먼저 확인했더니 xai/cohere에서
+   `list_models` 경고 로그가 `UnicodeEncodeError`로 깨져 실제 에러가 안 보였다.
+   콘솔 출력 대신 `load_config` + `make_provider(...).list_models()`를 직접
+   호출해 결과를 파일에 써서 우회 확인:
+   - **Cohere discovery가 실제로 동작함**(`GET .../compatibility/v1/models` →
+     200, 실제 31개 모델) — 조사 당시 "미확인"으로 보수적으로 꺼뒀던
+     `discovery: false`가 틀렸음이 실증됨. `settings.py`에서 제거(기본값
+     true로 전환), 이제 discovery로 전부 커버되므로 `default_models` 수동
+     목록도 삭제. `tests/test_settings.py`의 관련 테스트도 갱신.
+   - **x.ai**: 403 "신규 팀에 크레딧 없음" — 신규가입 무료크레딧이 없다는
+     사용자 보고와 일치, 문서로는 못 찾았던 사실을 실증.
+   - **Fireworks**: 실제로 $6 크레딧을 받았으나(문서로는 못 찾았던 사실 —
+     사용자 실사용이 더 정확한 SambaNova 패턴 재현) 지금은 412 "계정 정지"
+     상태 — 카탈로그 설정 문제가 아니라 계정 상태 문제.
+   - 로깅 크래시 자체는 `.env` 정리 후 재현 실패 — 원인 확정은 못했지만,
+     `server.py`의 로깅 초기화에 `sys.stdout`/`stderr` `errors="backslashreplace"`
+     방어 코드를 추가(`cli.py` `main()`에 이미 있는 패턴을 서버 부팅 경로에도
+     적용). 업스트림 에러는 임의의 유니코드를 담을 수 있다는 게 명시적으로
+     드러난 사례라, 근본 원인을 못 잡았어도 방어는 해두는 게 맞다고 판단.
+   - 전체 테스트 재실행, 235건 통과 유지.
 
 ### 설계 결정
 
@@ -77,11 +98,15 @@ Fireworks만, Bedrock/Azure는 별도 작업으로 미룬다"를 선택.
 
 ### 남은 문제 및 다음 할 일
 
-- 사용자 실키로 x.ai/Cohere/Together/Fireworks 연동 검증 필요(현재는 문서
-  기반 추정 — 특히 Cohere의 discovery=false 판단과 x.ai의 discovery=false
-  판단은 실제 `/models` 호출을 안 해보고 문서 부재만으로 내린 보수적 결정).
+- ~~사용자 실키로 x.ai/Cohere/Together/Fireworks 연동 검증~~ → x.ai/Cohere/
+  Fireworks는 실키로 검증 완료(위 5번). Together는 여전히 미검증(사용자가
+  $5 선불 부담으로 키를 안 만듦) — discovery/가격은 문서 근거만으로 유지 중.
+- x.ai 계정에 크레딧을 채우거나, Fireworks 계정 정지를 해제해야 실제 라우팅
+  동작(응답 성공)까지 검증 가능 — 지금은 "연결은 되는데 계정 상태 때문에
+  요청이 막힌다"까지만 확인됨.
+- `forge doctor`의 Unicode 로깅 크래시 근본 원인 미확정(재현 실패) — 재발하면
+  `.env` 값에 비-ASCII 문자가 실제로 섞여 있는지부터 확인.
 - AWS Bedrock/Azure OpenAI — `ProviderConfig` 스키마 확장(별도 작업, Plan.md P6).
-- PR 생성 전 리뷰 필요.
 
 ### 블로그/포트폴리오 소재
 

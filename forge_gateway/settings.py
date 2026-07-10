@@ -365,12 +365,11 @@ PROVIDER_CATALOG: "list[dict]" = [
      }},
     {"name": "cohere", "key_env": "COHERE_API_KEY",
      "api_base": "https://api.cohere.ai/compatibility/v1",
-     # OpenAI 호환 Compatibility API는 확인됨(docs.cohere.com/docs/compatibility-api)이나
-     # 이 경로에서 GET /models가 OpenAI 포맷으로 동작하는지는 미확인 -> discovery off
-     "discovery": False,
+     # discovery 기본값(True) 유지 — 실사용자 키로 GET /v1/models 직접 호출해 확인함
+     # (200, OpenAI 포맷 {"object":"list","data":[{"id":...}]}, 2026-07-10)
      # 현재 플래그십(Command A) 가격을 공식 페이지에서 1차 확인 못함(레거시 모델만 나열),
      # 코딩 벤치마크 수치도 확인 실패 -> capability_seed 없이 등록, 가격은 litellm 폴백에 위임
-     "default_models": ["command-a-03-2025", "command-r7b-12-2024"]},
+     },
     {"name": "together", "key_env": "TOGETHER_API_KEY",
      "api_base": "https://api.together.ai/v1",
      # discovery 기본값(True) 유지 — GET /v1/models가 OpenAI 포맷으로 동작함을 공식 문서로 확인

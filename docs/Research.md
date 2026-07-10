@@ -284,6 +284,45 @@ provider와 동일하게 취급, `capability_seed`는 모델 품질 순위라서
 deployment 이름) 이번 라운드에서 제외 — 별도 스키마 확장 작업으로 분리(사용자
 결정 2026-07-10, [Plan.md](Plan.md) 참조).
 
+### 2026-07-10 — 실키 검증 (사용자 실제 계정)
+
+문서 조사만으로 "미확인"이었던 항목 중 일부를 사용자가 실제로 4개 프로바이더에
+가입하고 키를 발급받아 검증했다. `forge_gateway.settings.load_config` +
+`make_provider(...).list_models()`를 직접 호출해 확인(콘솔 출력이 아니라 파일에
+써서 확인 — 아래 로깅 이슈 때문에 콘솔 경로는 배제).
+
+- **Cohere discovery — 미확인 → 확인됨(동작함)**: `GET
+  https://api.cohere.ai/compatibility/v1/models`가 실키로 `200`, OpenAI 포맷
+  `{"object":"list","data":[{"id":"command-a-03-2025",...}, ...]}`을 반환,
+  forge의 discovery 경로로 실제 31개 모델 등록 확인. `PROVIDER_CATALOG`의
+  `discovery: false`를 제거(기본값 true로 전환), `default_models` 수동 목록도
+  제거 — discovery가 전부 커버.
+- **x.ai 무료 크레딧 — 미확인 → 없음으로 확인**: 실키로 `GET /v1/models` 호출 시
+  `403 permission-denied`, 응답 바디 "Your newly created team doesn't have any
+  credits or licenses yet."(신규 팀에 크레딧 0, 구매 필요) — 신규가입 자동
+  무료크레딧이 없다는 사용자 보고와 일치. discovery 지원 여부는 이 응답으로는
+  검증 안 됨(권한 문제가 먼저 막음) — `discovery: false`는 유지.
+- **Fireworks 무료 크레딧 — 실제로 지급됨(~$6), 그러나 계정 정지 상태**: 사용자가
+  가입 시 $6 크레딧을 실제로 받았다고 확인(공식 문서로는 못 찾았던 항목 —
+  사용자 실사용이 문서보다 정확한 사례, SambaNova 재검증과 같은 패턴). 다만
+  현재 키로 호출하면 `412 precondition-failed`, "Account ... is suspended,
+  possibly due to reaching the monthly spending limit or failure to pay past
+  invoices" — 크레딧이 소진/한도 도달로 정지된 상태. 카탈로그 설정과는 무관한
+  계정 상태 문제.
+- **Together AI — 미검증**: 사용자가 키를 발급받지 않음(최소 $5 선불 요구사항 때문
+  — 위 조사 내용과 일치). discovery/가격 설정은 문서 근거 그대로 유지.
+
+**로깅 이슈(별개, 재현 실패)**: 첫 `forge doctor` 실행에서 `list_models` 경고
+로그가 `UnicodeEncodeError`로 깨져 실제 에러 내용이 가려지는 현상을 한 번
+관찰했다. 이후 `.env` 값을 정리하고 나서는 동일 호출을 여러 번 재현해도 다시
+발생하지 않았음 — 그 순간의 `.env` 값에 일시적으로 섞여 있던 비-ASCII 문자
+때문일 가능성이 높고, 결정적으로 재현하지는 못했다. 원인을 확정하지 못한 채로도
+`forge_gateway/server.py`의 로깅 설정에 `sys.stdout`/`sys.stderr`를
+`errors="backslashreplace"`로 재구성하는 방어 코드를 추가했다(`cli.py`의
+`main()`에 이미 있는 것과 동일 패턴을 서버 부팅 경로에도 적용) — 업스트림
+에러 메시지는 임의의 유니코드를 담을 수 있으므로, 인코딩 실패로 로그 자체가
+죽는 것보다는 이스케이프해서라도 보여주는 쪽이 안전하다.
+
 ## 조사 예정
 
 - [ ] litellm SDK의 `stream_options` / usage 청크 동작 방식 (M1-6 착수 전)

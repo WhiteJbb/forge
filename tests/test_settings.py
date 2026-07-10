@@ -307,17 +307,15 @@ class AutoProviderTests(unittest.TestCase):
             self.assertIsNotNone(provider, f"{name} should auto-register")
             self.assertFalse(provider.free, f"{name} should not be marked free")
 
-    def test_cohere_gets_default_models_without_capability_seed(self):
-        """가격/코딩 벤치마크를 공식 1차 소스로 확인 못해 capability_seed 없이 등록"""
+    def test_cohere_discovery_enabled_without_capability_seed(self):
+        """discovery는 실키로 직접 확인됨(200, OpenAI 포맷) - 가격/코딩 벤치마크를
+        공식 1차 소스로 확인 못해 capability_seed는 없음, discovery에 전적으로 위임"""
         os.environ["COHERE_API_KEY"] = "co-test"
         config = self._load(VALID_YAML)
         provider = config.provider("cohere")
         self.assertIsNotNone(provider)
-        self.assertFalse(provider.discovery)
-        cohere_models = [m for m in config.models if m.id.startswith("cohere:")]
-        self.assertGreaterEqual(len(cohere_models), 2)
-        for m in cohere_models:
-            self.assertIsNone(m.price_per_mtok)
+        self.assertTrue(provider.discovery)
+        self.assertFalse(any(m.id.startswith("cohere:") for m in config.models))
 
     def test_together_discovery_stays_enabled(self):
         """Together AI는 GET /v1/models가 OpenAI 포맷으로 동작함을 공식 문서로 확인 -> discovery 유지"""

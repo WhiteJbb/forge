@@ -116,12 +116,18 @@ AWS Bedrock/Azure OpenAI는 이번 라운드에서 **제외**(사용자 결정, 
 | P1 | `PROVIDER_CATALOG`에 x.ai/Cohere/Together AI/Fireworks AI 추가 — 전부 OpenAI 호환 단일 API 키 패턴(기존 groq/mistral/deepseek와 동일 계약) | Research.md 2026-07-10 | 완료 |
 | P2 | `capability_seed`에 `price_per_mtok` 필드 신설 — `apply_auto_providers`가 `ModelOverride.price_per_mtok`까지 스레딩하도록 확장(§5.12 가격 우선순위 1번 경로를 자동등록 모델에도 적용, 기존 tier/capabilities 스레딩과 같은 매커니즘) | — | 완료 |
 | P3 | 가격/벤치마크를 공식 1차 소스로 확인 못한 항목(Cohere 전체, Fireworks의 Qwen3.7-Plus/GLM-5.2)은 `capability_seed`를 비우거나 가격만 채우고 tier/capabilities는 비워 litellm 폴백·tier3 기본값에 위임 — 없는 근거를 만들어내지 않음 | Research.md 2026-07-10 | 완료 |
-| P4 | `.env.example` / README.md "Adding a provider is just an API key" 목록 / CHANGELOG.md 갱신 | — | 진행중 |
-| P5 | 카탈로그 확장 회귀 테스트 (`test_settings.py`) | — | 진행중 |
+| P4 | `.env.example` / README.md "Adding a provider is just an API key" 목록 / CHANGELOG.md 갱신 | — | 완료 |
+| P5 | 카탈로그 확장 회귀 테스트 (`test_settings.py`) | — | 완료 |
 | P6 | (별도 작업으로 분리) AWS Bedrock/Azure OpenAI — `ProviderConfig`에 `api_version`, AWS 자격증명 관련 필드 확장 필요. 스키마 계약 자체가 걸린 결정이라 이번 라운드에는 포함하지 않음 | 사용자 결정 2026-07-10 | 보류 |
+| P7 | 사용자 실키로 x.ai/Cohere/Fireworks 검증 → Cohere `discovery: false`가 틀렸음을 실증(200, 31개 모델) → 제거. x.ai/Fireworks는 연결은 되지만 계정 상태(크레딧 0 / 정지)로 실요청은 아직 미검증. Together는 $5 선불 부담으로 미검증 | Research.md 2026-07-10 "실키 검증" | 완료(검증 가능한 한도까지) |
+| P8 | `server.py` 로깅에 Windows 콘솔 유니코드 크래시 방어 추가(`cli.py`에 이미 있던 패턴을 서버 부팅 경로에도 적용) — 근본 원인은 재현 실패로 미확정 | WorkLog.md 2026-07-10 | 완료 |
 
 완료 기준: 4개 신규 프로바이더가 `forge doctor`/`forge models`에 인식되고, 공식 소스로
 확인된 가격이 `/v1/models`·비용 계산에 정확히 반영되며, 전체 테스트 통과.
+
+> **진행 상태** (2026-07-10): P1-P8 완료. 실키 검증은 x.ai/Cohere/Fireworks까지 진행,
+> Together AI는 $5 선불 요구사항으로 사용자가 키를 만들지 않아 미검증 — discovery/가격
+> 설정은 공식 문서 근거만으로 유지 중.
 
 > **M2.5 완료** (2026-07-09): 전체 153건 테스트 3회 연속 통과, editable install + `forge` CLI 동작.
 > **다음: 사용자 통합 검증** — 실키(NVIDIA)로 `forge doctor`/`forge start` + Cline(OpenAI) +

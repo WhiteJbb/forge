@@ -56,6 +56,10 @@ pre-1.0 (see [DESIGN.md](DESIGN.md) for the milestone plan); versioning is not y
 
 ### Fixed
 
+- `server.py`'s logging setup didn't guard against non-ASCII characters in upstream error
+  messages, which could crash the log write on a narrow-codepage Windows console
+  (`UnicodeEncodeError`) and hide the real error; `cli.py` already reconfigured stdout/stderr
+  with `errors="replace"`, now `server.py` does the same on the server-boot path.
 - A module-level app construction in `server.py` was loading real API keys during test/tool
   imports, leaking live traffic into what were meant to be isolated simulator tests.
 - `Retry-After` header handling for litellm 1.91.x (the header lives on
