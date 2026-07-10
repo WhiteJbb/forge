@@ -189,6 +189,101 @@ provider와 동일하게 취급, `capability_seed`는 모델 품질 순위라서
 
 **정정 후 상태**: SambaNova만 `free` 플래그 제거, Cerebras/Gemini는 변경 없음.
 
+## 2026-07-10 — 유료 프로바이더 확장 조사 (x.ai / Cohere / Together AI / Fireworks AI)
+
+사용자 요청("다른 유료 API 프로바이더들도 다 인식 가능하도록") 대응. 무료 티어 확장과
+달리 실제 과금이 걸리므로, 가격은 각 프로바이더 **공식 pricing 페이지를 1차 소스로
+직접 시딩**했다(사용자 결정) — litellm 내장 가격표(3순위 폴백, `core/pricing.py`)를
+그냥 신뢰하지 않았다. 확인 못한 항목은 "미확인"으로 남기고 지어내지 않았다.
+
+**조사 방법에 대한 메모(투명성)**: Together AI/Fireworks AI 조사 중 WebSearch 결과
+일부가 정상적인 문서 검색 결과가 아니라 전제를 반박하는 듯한 부가 텍스트와 미검증
+수치를 끼워 넣는 패턴을 보였다(프롬프트 인젝션 의심). 해당 결과는 전량 폐기하고
+공식 문서 원문(`docs.together.ai`, `docs.fireworks.ai`, `huggingface.co` 모델카드
+등)을 직접 fetch해서 재검증한 값만 아래에 반영했다.
+
+### x.ai (Grok)
+- `api_base`: `https://api.x.ai/v1`, `/v1/chat/completions` OpenAI 호환 확인. 공식 REST
+  레퍼런스에 `GET /v1/models`가 없어(chat/completions·responses·deferred-completion
+  3개만 문서화) discovery 지원 여부는 **미확인** → 보수적으로 `discovery: false`.
+  출처: [API reference](https://docs.x.ai/docs/api-reference), [quickstart](https://docs.x.ai/developers/quickstart)
+- 인증: `Authorization: Bearer $XAI_API_KEY`. 출처: 위 quickstart
+- 가격(USD/1M tok, input/output): `grok-4.5` $2.00/$6.00(context 500K), `grok-4.3`
+  $1.25/$2.50(context 1M), `grok-build-0.1`(에이전틱 코딩 전용) $1.00/$2.00(context 256K).
+  출처: [grok-4.5](https://docs.x.ai/developers/models/grok-4.5), [grok-4.3](https://docs.x.ai/developers/models/grok-4.3), [grok-build-0.1](https://docs.x.ai/developers/models/grok-build-0.1)
+- 레이트리밋(Tier 0 기본): grok-4.3/grok-build-0.1 계열 RPS 37/TPM 10M, grok-4.5 RPS
+  150/TPM 50M — 카탈로그의 `rpm`에는 반영하지 않음(다른 유료 provider와 동일 관례,
+  과금 등급에 따라 크게 달라짐). 출처: [rate-limits](https://docs.x.ai/developers/rate-limits)
+- 벤치마크: grok-4.5 SWE-bench Pro 64.7% — **xAI 자사 발표, 제3자 미검증**이라
+  `capability_seed`에서 tier1로는 반영했지만 참고용 caveat으로 남김. grok-build-0.1은
+  독립 벤치마크 수치가 없어 tier2로 보수적 배치.
+- 무료 크레딧: 공식 문서에 언급 없음, **미확인**(3차 매체 주장은 채택하지 않음).
+
+### Cohere
+- Cohere는 OpenAI SDK를 그대로 쓸 수 있는 **Compatibility API**를 공식 제공한다:
+  `https://api.cohere.ai/compatibility/v1`, `/chat/completions`가 streaming/tool
+  use/structured output까지 지원. 출처: [compatibility-api](https://docs.cohere.com/docs/compatibility-api)
+- 이 경로의 `GET /models`가 OpenAI 포맷으로 동작하는지는 문서에 명시 없음 —
+  **미확인** → `discovery: false`, `default_models`로 수동 공급.
+- 대표 모델: `command-a-03-2025`(256K ctx), `command-r7b-12-2024`(경량, 128K ctx).
+  최신 플래그십 `command-a-plus-05-2026`/`North Mini Code 1.0`은 엔터프라이즈
+  문의 전용(`sales@cohere.com`)이라 카탈로그 기본 목록에서 제외.
+  출처: [models](https://docs.cohere.com/docs/models), [command-a](https://docs.cohere.com/docs/command-a), [rate-limits](https://docs.cohere.com/docs/rate-limits)
+- **가격 미확인**: `cohere.com/pricing` 공식 FAQ 페이지에는 레거시 모델(Command,
+  Command R/R+)만 명시돼 있고 현재 플래그십(Command A) 단가는 페이지 구조상 직접
+  확인 실패 — 3rd-party(OpenRouter 등)가 일관되게 인용하는 $2.50/$10.00은 1차
+  소스 대조가 안 돼 **카탈로그에 반영하지 않음**(litellm 폴백에 위임). 출처:
+  [pricing](https://cohere.com/pricing)
+- 코딩 벤치마크: 공식 테크리포트(arXiv 2504.00698)가 SWE-Bench 등을 사용했다고
+  명시하나 정확한 수치는 PDF 파싱 실패로 **미확인** → `capability_seed` 미부여.
+- 레이트리밋: Trial 20 req/min(전 모델 공통), Production 500 req/min(Command
+  A/R+/R/R7B). 무료 트라이얼은 크레딧이 아니라 요청 속도 제한 형태.
+
+### Together AI
+- `api_base`: `https://api.together.ai/v1`. `/v1/chat/completions`,
+  `GET /v1/models` 모두 OpenAI 포맷으로 공식 지원 확인 → discovery 기본값(true) 유지.
+  출처: [openai-api-compatibility](https://docs.together.ai/docs/openai-api-compatibility)
+- 인증: `Authorization: Bearer $TOGETHER_API_KEY`. 출처: [api-keys](https://docs.together.ai/docs/api-keys-authentication)
+- 가격(USD/1M tok): `deepseek-ai/DeepSeek-V4-Pro` $1.74(캐시 $0.20)/$3.48,
+  `moonshotai/Kimi-K2.7-Code` $0.95(캐시 $0.19)/$4.00, `Qwen/Qwen3.7-Plus`
+  $0.32/$1.28, `meta-llama/Llama-3.3-70B-Instruct-Turbo` $1.04/$1.04. 출처:
+  [serverless/models](https://docs.together.ai/docs/serverless/models)
+- `capability_seed`는 DeepSeek-V4-Pro만 시딩(SWE-bench Verified 80.6% / SWE-bench
+  Pro 55.4% / LiveCodeBench 93.5, 공식 HF 모델카드 대조 — NVIDIA 서빙판과 동일
+  모델, 위 2026-07-09 시드와 일관). 출처: [HF model card](https://huggingface.co/deepseek-ai/DeepSeek-V4-Pro)
+  나머지 모델은 discovery로 자동 등록되므로 별도 시드 불필요.
+- 무료 크레딧 없음 — 최소 $5 선불 필요(만료 없음). 고정 RPM 미공개(조직별 동적
+  한도). 출처: [billing](https://docs.together.ai/docs/billing-credits), [rate-limits](https://docs.together.ai/docs/rate-limits)
+
+### Fireworks AI
+- `api_base`: `https://api.fireworks.ai/inference/v1`, `/chat/completions` OpenAI
+  호환 확인. 모델 목록은 계정 스코프 관리 API(`GET /v1/accounts/{id}/models`,
+  스키마가 OpenAI `/models`와 다름)뿐이라 discovery **불가** 확정 →
+  `discovery: false`. 출처: [openai-compatibility](https://docs.fireworks.ai/tools-sdks/openai-compatibility), [list-models](https://docs.fireworks.ai/api-reference/list-models)
+- 인증: `Authorization: Bearer $FIREWORKS_API_KEY`. 출처: [quickstart](https://docs.fireworks.ai/getting-started/quickstart)
+- 가격/모델ID(USD/1M tok, 공식 모델 페이지):
+  `accounts/fireworks/models/deepseek-v4-pro` $1.74(캐시 $0.14)/$3.48, SWE-bench
+  Verified 80.6%; `accounts/fireworks/models/kimi-k2p6` $0.95(캐시 $0.16)/$4.00,
+  SWE-bench Verified 80.2%; `accounts/fireworks/models/qwen3p7-plus`
+  $0.40(캐시 $0.08)/$1.60, 코딩 벤치마크 미공개; `accounts/fireworks/models/glm-5p2`
+  $1.40(캐시 $0.26)/$4.40, GPQA-Diamond 91.4%(코딩 특화 지표 아님, "강력한
+  오픈소스 코딩 모델"은 Fireworks 자체 발표뿐). 출처: [deepseek-v4-pro](https://fireworks.ai/models/fireworks/deepseek-v4-pro), [kimi-k2p6](https://fireworks.ai/models/fireworks/kimi-k2p6), [qwen3p7-plus](https://fireworks.ai/models/fireworks/qwen3p7-plus), [glm-5p2](https://fireworks.ai/blog/glm-5p2)
+- SWE-bench 확인된 두 모델(deepseek-v4-pro, kimi-k2p6)만 tier1 + 전체
+  capabilities 시딩, qwen3p7-plus/glm-5p2는 가격만 시딩하고 tier/capabilities는
+  비워 tier3 기본값에 위임(벤치마크 근거 없이 지어내지 않음).
+- 레이트리밋: 결제수단 미등록 10 RPM, 등록+크레딧 보유 시 계정 전체 6,000 RPM(계정
+  단위 상한, serverless 전용 별도 한도 아님). 출처: [rate-limits](https://docs.fireworks.ai/guides/quotas_usage/rate-limits)
+- 무료 크레딧: 공식 문서에서 확인 못함, **미확인**(3차 매체의 "$1 크레딧" 주장은
+  채택하지 않음).
+
+### 카탈로그 반영 요약
+`PROVIDER_CATALOG`에 4개 항목 추가 + `capability_seed`에 `price_per_mtok` 선택
+필드 신설(`apply_auto_providers`가 `ModelOverride.price_per_mtok`까지 스레딩하도록
+확장 — 기존 tier/capabilities 스레딩과 동일 매커니즘). Bedrock/Azure OpenAI는
+`ProviderConfig` 계약이 안 맞아(AWS SigV4 자격증명 / api_version + 리소스별
+deployment 이름) 이번 라운드에서 제외 — 별도 스키마 확장 작업으로 분리(사용자
+결정 2026-07-10, [Plan.md](Plan.md) 참조).
+
 ## 조사 예정
 
 - [ ] litellm SDK의 `stream_options` / usage 청크 동작 방식 (M1-6 착수 전)

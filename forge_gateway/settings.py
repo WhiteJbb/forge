@@ -340,6 +340,69 @@ PROVIDER_CATALOG: "list[dict]" = [
     # 문서로 "무료 모델"이라 확인된 항목만 forge.yaml의 models: 오버라이드로 개별 지정.
     {"name": "zai", "key_env": "ZAI_API_KEY",
      "api_base": "https://api.z.ai/api/paas/v4/"},
+    # --- 유료 프로바이더 확장 (2026-07-10 조사, docs/Research.md) ---
+    # capability_seed의 price_per_mtok은 공식 pricing 페이지 근거로만 채운다(litellm 내장
+    # 가격표를 신뢰하지 않고 직접 시딩하기로 결정 — 사용자 확인). 벤치마크/가격을 1차 소스로
+    # 확인 못한 항목은 price_per_mtok/capabilities를 비워 tier3·litellm 폴백에 맡긴다
+    # (§5.12 가격 우선순위, core/pricing.py).
+    {"name": "xai", "key_env": "XAI_API_KEY",
+     "api_base": "https://api.x.ai/v1",
+     # 공식 REST 레퍼런스(docs.x.ai/docs/api-reference)에 GET /v1/models 미기재 —
+     # discovery 지원 여부 미확인이라 보수적으로 off
+     "discovery": False,
+     "capability_seed": {
+         # xAI 자체 발표 SWE-bench Pro 64.7%(제3자 미검증, 참고용) — 플래그십, context 500K
+         "grok-4.5": {"tier": "tier1",
+                      "capabilities": {"code": 9, "debug": 8, "refactor": 8,
+                                       "docs": 8, "context": 9, "speed": 7},
+                      "price_per_mtok": [2.00, 6.00]},
+         # 코딩 에이전트 전용 모델("agentic software engineering workflows") — 독립
+         # 벤치마크 수치가 없어 보수적으로 tier2
+         "grok-build-0.1": {"tier": "tier2",
+                            "capabilities": {"code": 8, "debug": 7, "refactor": 7,
+                                             "docs": 7, "context": 7, "speed": 8},
+                            "price_per_mtok": [1.00, 2.00]},
+     }},
+    {"name": "cohere", "key_env": "COHERE_API_KEY",
+     "api_base": "https://api.cohere.ai/compatibility/v1",
+     # OpenAI 호환 Compatibility API는 확인됨(docs.cohere.com/docs/compatibility-api)이나
+     # 이 경로에서 GET /models가 OpenAI 포맷으로 동작하는지는 미확인 -> discovery off
+     "discovery": False,
+     # 현재 플래그십(Command A) 가격을 공식 페이지에서 1차 확인 못함(레거시 모델만 나열),
+     # 코딩 벤치마크 수치도 확인 실패 -> capability_seed 없이 등록, 가격은 litellm 폴백에 위임
+     "default_models": ["command-a-03-2025", "command-r7b-12-2024"]},
+    {"name": "together", "key_env": "TOGETHER_API_KEY",
+     "api_base": "https://api.together.ai/v1",
+     # discovery 기본값(True) 유지 — GET /v1/models가 OpenAI 포맷으로 동작함을 공식 문서로 확인
+     "capability_seed": {
+         # SWE-bench Verified 80.6% / SWE-bench Pro 55.4% / LiveCodeBench 93.5 (공식 HF 모델카드)
+         "deepseek-ai/DeepSeek-V4-Pro": {"tier": "tier1",
+                                         "capabilities": {"code": 10, "debug": 9, "refactor": 9,
+                                                          "docs": 8, "context": 8, "speed": 7},
+                                         "price_per_mtok": [1.74, 3.48]},
+     }},
+    {"name": "fireworks", "key_env": "FIREWORKS_API_KEY",
+     "api_base": "https://api.fireworks.ai/inference/v1",
+     # 계정 스코프 관리 API(GET /v1/accounts/{id}/models)뿐이고 OpenAI /models 포맷이
+     # 아님(docs.fireworks.ai/api-reference/list-models) -> discovery off
+     "discovery": False,
+     "capability_seed": {
+         # SWE-bench Verified 80.6% (공식 모델 페이지)
+         "accounts/fireworks/models/deepseek-v4-pro": {
+             "tier": "tier1",
+             "capabilities": {"code": 10, "debug": 9, "refactor": 9,
+                              "docs": 8, "context": 9, "speed": 7},
+             "price_per_mtok": [1.74, 3.48]},
+         # SWE-bench Verified 80.2% (공식 모델 페이지)
+         "accounts/fireworks/models/kimi-k2p6": {
+             "tier": "tier1",
+             "capabilities": {"code": 10, "debug": 9, "refactor": 8,
+                              "docs": 8, "context": 8, "speed": 7},
+             "price_per_mtok": [0.95, 4.00]},
+         # 가격은 공식 확인됨, 코딩 벤치마크는 미확인 -> tier/capabilities 없이 가격만 시딩
+         "accounts/fireworks/models/qwen3p7-plus": {"price_per_mtok": [0.40, 1.60]},
+         "accounts/fireworks/models/glm-5p2": {"price_per_mtok": [1.40, 4.40]},
+     }},
     {"name": "anthropic", "key_env": "ANTHROPIC_API_KEY",
      "litellm_prefix": "anthropic", "discovery": False,
      # OpenAI 호환 /models가 없어 discovery 불가 — 대표 모델을 카탈로그가 공급
@@ -378,10 +441,12 @@ def apply_auto_providers(config: "ForgeConfig") -> "list[str]":
         for model_id in item.get("default_models", []):
             config.models.append(ModelOverride(id=f"{name}:{model_id}"))
         for model_id, seed in item.get("capability_seed", {}).items():
+            price = seed.get("price_per_mtok")
             config.models.append(ModelOverride(
                 id=f"{name}:{model_id}",
                 tier=seed.get("tier"),
                 capabilities=seed.get("capabilities", {}),
+                price_per_mtok=tuple(price) if price else None,
             ))
         added.append(name)
     return added

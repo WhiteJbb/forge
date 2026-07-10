@@ -46,6 +46,13 @@ pre-1.0 (see [DESIGN.md](DESIGN.md) for the milestone plan); versioning is not y
   that apply automatically the moment the provider auto-registers, with no `forge.yaml` edit
   needed. Seeded entries are treated as config-sourced, so they're also eligible for active
   health probing (previously only real traffic could establish health for auto-discovered models).
+- Four paid providers join the built-in catalog: x.ai (Grok), Cohere, Together AI, and Fireworks
+  AI. `capability_seed` entries can now also carry a `price_per_mtok` override, sourced directly
+  from each provider's official pricing page rather than LiteLLM's bundled cost table (see
+  Research.md for citations); models without an officially-confirmed price or benchmark are
+  registered without a seed and fall back to LiteLLM's cost table or `unknown`. AWS Bedrock and
+  Azure OpenAI were evaluated but excluded — both need per-resource credentials/config that don't
+  fit the single-API-key catalog pattern.
 
 ### Fixed
 

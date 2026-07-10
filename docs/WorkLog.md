@@ -4,6 +4,105 @@
 
 ---
 
+## 2026-07-10 — 유료 프로바이더 카탈로그 확장 (feat/paid-provider-catalog)
+
+### 배경
+
+사용자가 "다른 유료 API 프로바이더들도 다 인식 가능하도록 하려는데 뭐뭐 추가해야될까?
+x.ai라던지"라고 질문. 바로 목록을 나열하지 않고 먼저 방향을 확인했다 — 지금까지
+카탈로그 확장은 "공식 문서로 확인된 **무료** 프로바이더만 큐레이션"이라는 방향(Plan.md
+M3 후속)이었고, 유료 프로바이더를 폭넓게 받자는 결정은 없었기 때문. 질문 3개로 정리:
+① 목적(페일오버 다양성/프리미엄 모델 사용/포괄적 카탈로그) → **포괄적 카탈로그**,
+② 우선 대상(x.ai/Cohere/Together AI·Fireworks/AWS Bedrock·Azure OpenAI 중 복수 선택)
+→ **전부**, ③ 가격 정확도(공식 페이지 직접 시딩/litellm 내장 신뢰/추적 안 함) →
+**공식 pricing 페이지 근거로 직접 시딩**.
+
+②에 답하자마자 바로 구현하지 않고 실제 인증 어댑터(`litellm_provider.py`)와
+`ProviderConfig` 스키마를 먼저 읽어 확인한 결과, AWS Bedrock(AWS SigV4 3종
+자격증명)과 Azure OpenAI(리소스별 커스텀 deployment 이름 + `api_version`)는
+"단일 API 키 + api_base"라는 기존 카탈로그 계약에 안 맞는다는 걸 발견 — 스키마
+확장이 필요한 별도 결정이라 다시 질문했고, 사용자가 "이번엔 x.ai/Cohere/Together/
+Fireworks만, Bedrock/Azure는 별도 작업으로 미룬다"를 선택.
+
+### 한 일
+
+1. **리서치 (일반 서브에이전트 4개 병렬, 프로바이더별 1개)** — x.ai/Cohere/Together AI/
+   Fireworks AI 공식 문서를 웹에서 직접 fetch해서 엔드포인트/인증/모델ID/공식
+   pricing/레이트리밋/코딩 벤치마크를 조사. 결과는 `docs/Research.md` 2026-07-10
+   섹션에 출처 URL과 함께 기록.
+   - **프롬프트 인젝션 의심 감지**: Together AI·Fireworks 담당 에이전트가 WebSearch
+     결과 일부에서 전제를 반박하는 부가 텍스트 + 미검증 수치가 섞여 드는 비정상
+     패턴을 발견하고 전량 폐기, 대신 `curl -L`로 공식 문서 원문(mintlify raw md,
+     HF README raw, discourse json)을 직접 받아 재검증. 사용자에게도 이 사실을
+     투명하게 알림.
+   - Cohere는 OpenAI 호환 Compatibility API가 있다는 건 확인됐지만 현재 플래그십
+     (Command A) 가격을 공식 페이지에서 1차 소스로 확인하지 못함(레거시 모델만
+     명시) — 3rd-party 인용값은 채택하지 않고 "미확인"으로 남김.
+2. **`forge_gateway/settings.py`**:
+   - `PROVIDER_CATALOG`에 `xai`/`cohere`/`together`/`fireworks` 4개 항목 추가.
+     x.ai/Fireworks/Cohere는 discovery 미확인이라 `discovery: false` +
+     `capability_seed`로 모델을 직접 공급, Together AI는 공식 문서로 discovery가
+     동작함을 확인해 기본값(true) 유지.
+   - `capability_seed`에 `price_per_mtok` 선택 필드 신설, `apply_auto_providers`가
+     `ModelOverride.price_per_mtok`까지 스레딩하도록 확장(기존 tier/capabilities
+     스레딩과 동일 매커니즘) — 이게 없으면 가격을 공식 소스로 확인해도 꽂을 자리가
+     없었음(§5.12 가격 우선순위 1번 경로는 forge.yaml 수동 오버라이드만 지원했음).
+   - 벤치마크/가격을 1차 소스로 확인 못한 모델(Cohere 전체, Fireworks의
+     Qwen3.7-Plus/GLM-5.2)은 `price_per_mtok`만 채우거나 아예 시드를 비워 tier3
+     기본값·litellm 폴백에 위임 — 없는 근거를 만들어내지 않음.
+3. **문서 동기화** — `.env.example`(신규 키 4개 안내), `README.md`("Adding a
+   provider is just an API key" 목록 갱신 + 가격 소싱 정책 문단 + Bedrock/Azure
+   미지원 사유 명시), `CHANGELOG.md`(Added), `docs/Research.md`(위 리서치 전체
+   + 프롬프트 인젝션 메모), `docs/Plan.md`(M3 후속 "유료 프로바이더 카탈로그
+   확장" 섹션, Bedrock/Azure는 P6으로 보류 표기).
+4. **`tests/test_settings.py`**: 신규 프로바이더 자동등록, Cohere의 무시드
+   등록, Together discovery 유지, `price_per_mtok` 스레딩(전체 시드/가격만
+   시드 두 경우 모두) 검증 테스트 5건 추가. 전체 235건 통과.
+
+### 설계 결정
+
+- **가격은 forge.yaml 오버레이가 아니라 `capability_seed`에 얹었다** — 이미
+  존재하는 자동등록 경로(사용자가 키만 넣으면 등록)를 그대로 쓰기 위해서다.
+  별도 forge.yaml `models:` 섹션을 미리 채워두는 방식도 가능했지만, 그러면
+  README의 "Adding a provider is just an API key" 원칙이 깨진다.
+- **Bedrock/Azure는 스키마를 억지로 끼워 맞추지 않고 통째로 미뤘다** — 계약
+  변경(§ "계약 우선" 원칙)이 걸린 결정이라, 조사 중간에 발견하자마자 구현을
+  멈추고 사용자에게 다시 물었다. 어설프게 끼워 넣으면(예: `api_key_env`에
+  AWS_ACCESS_KEY_ID를 넣고 Bearer 토큰처럼 취급) 실제로 동작하지 않거나
+  Azure의 deployment 매핑을 사용자가 우회할 방법이 없어져 오히려 더 나쁘다.
+- **Cohere 가격을 3rd-party 인용값으로 채우지 않았다** — "공식 페이지 근거로
+  직접 시딩"이라는 이번 결정의 취지 자체가 litellm 내장 표(불확실한 출처)를
+  신뢰하지 않겠다는 것이었으므로, 똑같이 출처가 약한 3rd-party 값으로 대체하면
+  결정의 의미가 없어진다. 미확인인 채로 litellm 폴백에 맡기는 게 일관적이다.
+
+### 남은 문제 및 다음 할 일
+
+- 사용자 실키로 x.ai/Cohere/Together/Fireworks 연동 검증 필요(현재는 문서
+  기반 추정 — 특히 Cohere의 discovery=false 판단과 x.ai의 discovery=false
+  판단은 실제 `/models` 호출을 안 해보고 문서 부재만으로 내린 보수적 결정).
+- AWS Bedrock/Azure OpenAI — `ProviderConfig` 스키마 확장(별도 작업, Plan.md P6).
+- PR 생성 전 리뷰 필요.
+
+### 블로그/포트폴리오 소재
+
+- "무료 프로바이더 확장과 유료 프로바이더 확장이 왜 다른 문제인가" — 가격
+  정확도가 실제 과금과 연결되는 순간부터 "1차 소스 인용 vs 지어내지 않기"가
+  코드 설계(스키마에 선택 필드 하나 더 두는 것)로 이어지는 과정.
+- "서브에이전트가 프롬프트 인젝션을 스스로 감지하고 폐기한 사례" — 웹 리서치
+  위임 시 결과를 맹신하지 않고 1차 소스 직접 대조로 되돌아간 방어적 행동.
+
+### Learning Recovery
+
+- AI가 주도적으로 처리: 4개 프로바이더 리서치 위임, 카탈로그 스키마 확장 설계,
+  문서 5종 동기화, 테스트 작성.
+- 아직 완전히 이해 못했을 수 있는 부분: `core/pricing.py`의 가격 우선순위 3단계
+  (forge.yaml > free 플래그 > litellm.model_cost)가 `capability_seed`를 통한
+  자동등록 경로에서 정확히 어떻게 상호작용하는지, LiteLLM이 Bedrock/Azure의
+  자격증명을 내부적으로 어떻게 읽어오는지(boto3 체인 vs 명시적 kwargs)는 다음에
+  직접 설명해볼 가치가 있음.
+
+---
+
 ## 2026-07-09 — 공개 배포 전 점검 (feat/free-provider-catalog, 마무리)
 
 ### 배경

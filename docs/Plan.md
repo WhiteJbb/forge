@@ -98,6 +98,31 @@
 > PostgreSQL/Redis/멀티 API 키 로테이션은 여전히 DESIGN.md §10 기준 "보류"(단일
 > 로컬 사용자 배포에는 불필요) — "공개 오픈소스로 내놓기" 기준 격차는 이번 점검으로 해소.
 
+### M3 후속: 유료 프로바이더 카탈로그 확장 (진행중)
+
+배경: 사용자 요청 — "다른 유료 API 프로바이더들도 다 인식 가능하도록, x.ai라던지" (2026-07-10
+대화). 목적은 포괄적 카탈로그 구축(사용자 확인) — 무료 티어 확장과 달리 실제 과금이
+걸리므로 가격은 **공식 pricing 페이지 근거로 직접 시딩**하기로 결정(litellm 내장
+가격표 신뢰 대신, 사용자 확인) — 근거는 [Research.md](Research.md) 2026-07-10 참조.
+진행 방식: 브랜치 `feat/paid-provider-catalog` → PR → squash merge.
+
+AWS Bedrock/Azure OpenAI는 이번 라운드에서 **제외**(사용자 결정, 2026-07-10) — 둘 다
+`ProviderConfig`의 "단일 API 키 + api_base" 계약에 안 맞음(Bedrock은 AWS SigV4 3종
+자격증명, Azure는 리소스별 커스텀 deployment 이름 + `api_version`이 필요해 카탈로그
+자동등록 자체가 구조적으로 어려움). 스키마 확장은 별도 작업으로 분리.
+
+| # | 작업 | 근거 | 상태 |
+| --- | --- | --- | --- |
+| P1 | `PROVIDER_CATALOG`에 x.ai/Cohere/Together AI/Fireworks AI 추가 — 전부 OpenAI 호환 단일 API 키 패턴(기존 groq/mistral/deepseek와 동일 계약) | Research.md 2026-07-10 | 완료 |
+| P2 | `capability_seed`에 `price_per_mtok` 필드 신설 — `apply_auto_providers`가 `ModelOverride.price_per_mtok`까지 스레딩하도록 확장(§5.12 가격 우선순위 1번 경로를 자동등록 모델에도 적용, 기존 tier/capabilities 스레딩과 같은 매커니즘) | — | 완료 |
+| P3 | 가격/벤치마크를 공식 1차 소스로 확인 못한 항목(Cohere 전체, Fireworks의 Qwen3.7-Plus/GLM-5.2)은 `capability_seed`를 비우거나 가격만 채우고 tier/capabilities는 비워 litellm 폴백·tier3 기본값에 위임 — 없는 근거를 만들어내지 않음 | Research.md 2026-07-10 | 완료 |
+| P4 | `.env.example` / README.md "Adding a provider is just an API key" 목록 / CHANGELOG.md 갱신 | — | 진행중 |
+| P5 | 카탈로그 확장 회귀 테스트 (`test_settings.py`) | — | 진행중 |
+| P6 | (별도 작업으로 분리) AWS Bedrock/Azure OpenAI — `ProviderConfig`에 `api_version`, AWS 자격증명 관련 필드 확장 필요. 스키마 계약 자체가 걸린 결정이라 이번 라운드에는 포함하지 않음 | 사용자 결정 2026-07-10 | 보류 |
+
+완료 기준: 4개 신규 프로바이더가 `forge doctor`/`forge models`에 인식되고, 공식 소스로
+확인된 가격이 `/v1/models`·비용 계산에 정확히 반영되며, 전체 테스트 통과.
+
 > **M2.5 완료** (2026-07-09): 전체 153건 테스트 3회 연속 통과, editable install + `forge` CLI 동작.
 > **다음: 사용자 통합 검증** — 실키(NVIDIA)로 `forge doctor`/`forge start` + Cline(OpenAI) +
 > Claude Code(`ANTHROPIC_BASE_URL`) 실연동. 검증 후 M3(Dashboard, Prometheus, PostgreSQL) 착수.
