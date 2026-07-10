@@ -119,15 +119,16 @@ AWS Bedrock/Azure OpenAI는 이번 라운드에서 **제외**(사용자 결정, 
 | P4 | `.env.example` / README.md "Adding a provider is just an API key" 목록 / CHANGELOG.md 갱신 | — | 완료 |
 | P5 | 카탈로그 확장 회귀 테스트 (`test_settings.py`) | — | 완료 |
 | P6 | (별도 작업으로 분리) AWS Bedrock/Azure OpenAI — `ProviderConfig`에 `api_version`, AWS 자격증명 관련 필드 확장 필요. 스키마 계약 자체가 걸린 결정이라 이번 라운드에는 포함하지 않음 | 사용자 결정 2026-07-10 | 보류 |
-| P7 | 사용자 실키로 x.ai/Cohere/Fireworks 검증 → Cohere `discovery: false`가 틀렸음을 실증(200, 31개 모델) → 제거. x.ai/Fireworks는 연결은 되지만 계정 상태(크레딧 0 / 정지)로 실요청은 아직 미검증. Together는 $5 선불 부담으로 미검증 | Research.md 2026-07-10 "실키 검증" | 완료(검증 가능한 한도까지) |
+| P7 | 사용자 실키로 x.ai/Cohere/Fireworks 검증. Cohere/Fireworks 둘 다 discovery가 실제로 동작함을 확인했으나, 반환 목록에 채팅 불가 모달(Cohere: 음성 전사, Fireworks: 이미지 생성)이 섞여 있어 4xx-no-failover 정책과 부딪히는 위험을 확인 → 사용자 결정으로 둘 다 `discovery: false` 유지, 채팅 모델만 수동 큐레이션. Fireworks는 계정 정지도 해결돼 실제 채팅 요청(probe)까지 성공 확인. x.ai는 계정에 크레딧 0(구매 필요)까지 확인. Together는 $5 선불 부담으로 미검증 | Research.md 2026-07-10 "실키 검증" | 완료(검증 가능한 한도까지) |
 | P8 | `server.py` 로깅에 Windows 콘솔 유니코드 크래시 방어 추가(`cli.py`에 이미 있던 패턴을 서버 부팅 경로에도 적용) — 근본 원인은 재현 실패로 미확정 | WorkLog.md 2026-07-10 | 완료 |
 
 완료 기준: 4개 신규 프로바이더가 `forge doctor`/`forge models`에 인식되고, 공식 소스로
 확인된 가격이 `/v1/models`·비용 계산에 정확히 반영되며, 전체 테스트 통과.
 
-> **진행 상태** (2026-07-10): P1-P8 완료. 실키 검증은 x.ai/Cohere/Fireworks까지 진행,
-> Together AI는 $5 선불 요구사항으로 사용자가 키를 만들지 않아 미검증 — discovery/가격
-> 설정은 공식 문서 근거만으로 유지 중.
+> **진행 상태** (2026-07-10): P1-P8 완료. Fireworks는 실제 채팅 요청까지 성공 검증(연결 +
+> 계정 상태 + 실요청 전부 확인). x.ai는 연결은 되지만 계정 크레딧 0(구매 필요). Together
+> AI는 $5 선불 요구사항으로 사용자가 키를 만들지 않아 미검증. Cohere/Fireworks 모두
+> discovery는 동작하지만 비채팅 모달 혼입 위험 때문에 의도적으로 꺼둔 상태 유지.
 
 > **M2.5 완료** (2026-07-09): 전체 153건 테스트 3회 연속 통과, editable install + `forge` CLI 동작.
 > **다음: 사용자 통합 검증** — 실키(NVIDIA)로 `forge doctor`/`forge start` + Cline(OpenAI) +

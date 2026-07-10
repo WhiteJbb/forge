@@ -96,14 +96,33 @@ Fireworks만, Bedrock/Azure는 별도 작업으로 미룬다"를 선택.
   신뢰하지 않겠다는 것이었으므로, 똑같이 출처가 약한 3rd-party 값으로 대체하면
   결정의 의미가 없어진다. 미확인인 채로 litellm 폴백에 맡기는 게 일관적이다.
 
+6. **Fireworks 계정 정지 해제 후 재검증 + discovery 재검토** — 사용자가 결제 문제를
+   해결("firework 풀었어")한 뒤 다시 확인: `list_models` 성공(7개 모델), 실제
+   `probe`(채팅 completion, max_tokens=1)도 `deepseek-v4-pro`로 성공(레이턴시
+   ~1.8초) — 연결·계정 상태·실요청 경로 전부 검증 완료.
+   - `list_models`가 반환한 7개 중 `flux-1-schnell-fp8`(이미지 생성 모델)이
+     섞여 있는 걸 발견 — discovery는 실제로 동작하지만(공식 문서에 관리 API만
+     보고 "불가"라 판단했던 원래 조사가 틀렸음), 채팅 불가 모달까지 같은
+     목록에 노출된다는 뜻. forge는 4xx를 failover 없이 그대로 반환하므로
+     스케줄러가 이런 모델을 고르면 요청이 복구 없이 실패할 위험이 있음
+     (Fireworks 7개 중 1개 ≈14%, 이미 discovery:true로 바꿔둔 Cohere도
+     31개 중 1개 ≈3%로 같은 위험을 갖고 있었다는 걸 이때 같이 발견).
+   - 사용자에게 물어 **Cohere/Fireworks 둘 다 discovery:false로 되돌리기**로
+     결정 — discovery 자체는 동작이 확인됐지만 안전(failover 가능한 순수
+     채팅 모델만 큐레이션)을 우선. `settings.py`의 cohere 항목을 원복
+     (`default_models` 복원), 관련 테스트도 원복하고 근거 주석을 "미확인"이
+     아니라 "확인됐지만 의도적으로 off"로 갱신.
+   - 전체 테스트 재실행, 235건 통과 유지.
+
 ### 남은 문제 및 다음 할 일
 
-- ~~사용자 실키로 x.ai/Cohere/Together/Fireworks 연동 검증~~ → x.ai/Cohere/
-  Fireworks는 실키로 검증 완료(위 5번). Together는 여전히 미검증(사용자가
-  $5 선불 부담으로 키를 안 만듦) — discovery/가격은 문서 근거만으로 유지 중.
-- x.ai 계정에 크레딧을 채우거나, Fireworks 계정 정지를 해제해야 실제 라우팅
-  동작(응답 성공)까지 검증 가능 — 지금은 "연결은 되는데 계정 상태 때문에
-  요청이 막힌다"까지만 확인됨.
+- Together AI는 여전히 미검증(사용자가 $5 선불 부담으로 키를 안 만듦) —
+  discovery/가격은 문서 근거만으로 유지 중.
+- x.ai는 연결은 확인됐지만 계정 크레딧이 0(구매 필요) — 실제 채팅 요청까지는
+  아직 미검증.
+- Cohere/Fireworks 모두 discovery 자체는 동작이 확인됐으나 비채팅 모달 혼입
+  위험으로 의도적으로 꺼둔 상태 — 나중에 "채팅 모델만 걸러내는" 필터링
+  매커니즘을 만들면 다시 켤 수 있음(지금은 스코프 밖으로 미룸).
 - `forge doctor`의 Unicode 로깅 크래시 근본 원인 미확정(재현 실패) — 재발하면
   `.env` 값에 비-ASCII 문자가 실제로 섞여 있는지부터 확인.
 - AWS Bedrock/Azure OpenAI — `ProviderConfig` 스키마 확장(별도 작업, Plan.md P6).

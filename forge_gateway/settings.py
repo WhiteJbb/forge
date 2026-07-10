@@ -365,11 +365,15 @@ PROVIDER_CATALOG: "list[dict]" = [
      }},
     {"name": "cohere", "key_env": "COHERE_API_KEY",
      "api_base": "https://api.cohere.ai/compatibility/v1",
-     # discovery 기본값(True) 유지 — 실사용자 키로 GET /v1/models 직접 호출해 확인함
-     # (200, OpenAI 포맷 {"object":"list","data":[{"id":...}]}, 2026-07-10)
+     # discovery는 실키로 동작 확인됨(200, OpenAI 포맷, 31개 모델 — 2026-07-10)이지만
+     # 그 목록에 채팅 불가 모달(예: cohere-transcribe-03-2026 음성 전사)이 섞여 있음.
+     # 4xx는 failover 안 하고 그대로 반환하는 정책(§7 UpstreamBadRequest)상, 스케줄러가
+     # 우연히 그런 모델을 골라 라우팅하면 복구 없이 요청이 실패함 -> 의도적으로 off,
+     # 채팅 모델만 수동 큐레이션 (사용자 결정 2026-07-10, Research.md 참조)
+     "discovery": False,
      # 현재 플래그십(Command A) 가격을 공식 페이지에서 1차 확인 못함(레거시 모델만 나열),
      # 코딩 벤치마크 수치도 확인 실패 -> capability_seed 없이 등록, 가격은 litellm 폴백에 위임
-     },
+     "default_models": ["command-a-03-2025", "command-r7b-12-2024"]},
     {"name": "together", "key_env": "TOGETHER_API_KEY",
      "api_base": "https://api.together.ai/v1",
      # discovery 기본값(True) 유지 — GET /v1/models가 OpenAI 포맷으로 동작함을 공식 문서로 확인
@@ -382,8 +386,11 @@ PROVIDER_CATALOG: "list[dict]" = [
      }},
     {"name": "fireworks", "key_env": "FIREWORKS_API_KEY",
      "api_base": "https://api.fireworks.ai/inference/v1",
-     # 계정 스코프 관리 API(GET /v1/accounts/{id}/models)뿐이고 OpenAI /models 포맷이
-     # 아님(docs.fireworks.ai/api-reference/list-models) -> discovery off
+     # discovery는 실키로 동작 확인됨(OpenAI 포맷 7개 모델 반환 - 2026-07-10)이지만
+     # 그 중 flux-1-schnell-fp8(이미지 생성)처럼 채팅 불가 모달이 7개 중 1개꼴로
+     # 섞여 있어 Cohere보다 비율이 높음. 4xx는 failover 안 하는 정책(§7)상 스케줄러가
+     # 그런 모델을 고르면 복구 없이 요청이 실패하므로 의도적으로 off, 채팅 모델만
+     # 수동 큐레이션 (사용자 결정 2026-07-10, Research.md 참조)
      "discovery": False,
      "capability_seed": {
          # SWE-bench Verified 80.6% (공식 모델 페이지)
