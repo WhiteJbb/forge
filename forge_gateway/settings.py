@@ -407,7 +407,15 @@ PROVIDER_CATALOG: "list[dict]" = [
              "price_per_mtok": [0.95, 4.00]},
          # 가격은 공식 확인됨, 코딩 벤치마크는 미확인 -> tier/capabilities 없이 가격만 시딩
          "accounts/fireworks/models/qwen3p7-plus": {"price_per_mtok": [0.40, 1.60]},
-         "accounts/fireworks/models/glm-5p2": {"price_per_mtok": [1.40, 4.40]},
+         # GLM-5.2 — nvidia:z-ai/glm-5.2와 동일 모델(forge.yaml, SWE-Pro 62.1% 공식
+         # z.ai 벤치마크). 모델 실력은 호스트가 바뀌어도 그대로다(속도만 다름) -
+         # 이미 확보한 근거를 그대로 재사용, 새로 지어내지 않음 (2026-07-11 사용자
+         # 지적으로 발견한 불일치 수정)
+         "accounts/fireworks/models/glm-5p2": {
+             "tier": "tier1",
+             "capabilities": {"code": 10, "debug": 10, "refactor": 10,
+                              "docs": 8, "context": 10, "speed": 8},
+             "price_per_mtok": [1.40, 4.40]},
      }},
     {"name": "anthropic", "key_env": "ANTHROPIC_API_KEY",
      "litellm_prefix": "anthropic", "discovery": False,

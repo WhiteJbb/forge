@@ -413,6 +413,30 @@ reasoning 토큰과 혼동 방지). 키가 없는 x.ai 개별 모델(Together는
   없이는 호출이 막혀 실제로는 못 쓴다 — 사용자가 결제수단을 추가하기 전까지는
   참고 정보로만 취급.
 
+### 후속: 동일 모델 tier 일관성 점검 (2026-07-11, 사용자 지적으로 발견)
+
+사용자가 "유료 모델 중 성능 좋은 것들은 tier1에 있어야 하는거 아니야?"라고 질문 —
+전체 capability_seed/forge.yaml을 "같은 모델이 여러 호스트에 있으면 tier가
+일치하는가" 기준으로 재점검했다. 모델 실력은 호스트가 바뀌어도 동일하고(속도만
+다름), 이미 확보한 벤치마크 근거를 다른 호스트 항목에 그대로 적용하지 않은 게
+있는지 확인.
+
+**발견한 불일치 1건**: `fireworks:accounts/fireworks/models/glm-5p2`(GLM-5.2)가
+`nvidia:z-ai/glm-5.2`(forge.yaml, tier1, SWE-Pro 62.1% 공식 z.ai 벤치마크)와 같은
+모델인데, Fireworks 리서치 당시 이 사실을 놓쳐서 코딩 벤치마크 "미확인"으로
+처리해 tier1이 아니라 기본값(tier3)에 있었다. 새 벤치마크를 지어내는 게 아니라
+**이미 이 프로젝트에서 확인·사용 중인 근거를 그대로 재적용**하는 수정이라 즉시
+반영 — `capability_seed`에 tier1 + nvidia와 동일한 capabilities 값 추가.
+
+**다른 중복 모델은 대조 결과 일관됨**: `gpt-oss-120b`(nvidia/cerebras/sambanova
+전부 tier2), `deepseek-v4-pro`(nvidia/together/fireworks 전부 tier1) — 문제 없음.
+`qwen3.5-397b-a17b` vs `qwen3p7-plus`, `MiniMax-M2.7` vs `minimax-m3`는 버전이
+달라(3.5≠3.7, M2.7≠M3) 강제 일치 대상이 아님. Cohere 모델들이 tier3(기본값)에
+있는 건 "확인 안 됨"의 시스템 공통 기본 취급이라 문제가 아님 — 실제 성능이
+나쁘다고 판정한 게 아니라, 나머지 100여 개 미시드 NVIDIA 모델과 동일하게 "아직
+벤치마크 근거가 없다"는 뜻. 속도는 tier와 무관하게 `default` 정책의 `prefer`
+목록이 이미 따로 챙기고 있음(위 섹션 참조).
+
 ## 조사 예정
 
 - [ ] litellm SDK의 `stream_options` / usage 청크 동작 방식 (M1-6 착수 전)
