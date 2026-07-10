@@ -54,3 +54,31 @@
 ## 2026-07-09 — NVIDIA 무료 티어 RPM 한도 40 확인
 
 **결정**: 선제 스로틀링(§5.13) 기본값 `rpm: 40` — 사용자 실측 확인값.
+
+## 2026-07-11 — 속도 라우팅: `tier` 재정의 대신 정책 `prefer` 확장
+
+**결정**: 무료 모델이 너무 느리다는 사용자 피드백에 `tier`(실력 순위) 자체를 속도
+기준으로 재정의하지 않고, 기존에 이미 있던 방식(`forge.yaml`의 `default` 정책이
+빠른 모델을 `prefer`로 따로 우선시키는 2026-07-09 전례)을 그대로 확장하기로
+결정. `default`/`heavy-work`/`hard-tasks` 세 정책의 `prefer` 순서를 실측
+TTFT(2026-07-11, docs/Research.md 참조)로 갱신 — cerebras/gemini/sambanova/
+cohere/fireworks/x.ai를 포함해 전 프로바이더 실측. `default`는 "무료 먼저 다
+쓰고 안 되거나 느리면 유료 빠른 모델로" 순서(사용자 확정), `heavy-work`/
+`hard-tasks`는 여전히 무료 `nvidia:deepseek-v4-pro`를 우선하고 유료 고속 호스팅은
+쿨다운 시 대체용으로만 추가.
+
+**이유**: `tier`를 속도로 재정의하면 `hard-tasks`/`heavy-work` 정책이 명시적으로
+"느려도 강한 모델을 쓴다"는 의도로 tier1(v4-pro 등)을 지정해둔 것과 의미가
+충돌한다. 반면 정책 `prefer` 확장은 기존 설계 의도(실력=tier, 속도=정책)를
+그대로 유지하면서 새 데이터만 반영하는 최소 변경이라 리스크가 작다.
+
+**부수 발견**:
+- `scheduler.py::_score()`가 `capability_seed`의 `speed` 필드를 전혀 읽지
+  않는다는 걸 확인(dead data) — 실제 속도 반영 경로는 `tier` 가중치(10%)와
+  실측 EWMA latency(15%, 2초 이상은 전부 0점이라 "다소 느림"과 "치명적으로
+  느림"을 구분 못함)뿐. 이번엔 `prefer` 순서로 우회했지만, `speed`를 스코어링에
+  실제로 반영하거나 latency 스코어 구간을 세분화하는 건 별도 개선 과제로 남음.
+- Gemini "Flash" 계열(gemini-3-flash-preview/3.5-flash)이 실측 TTFT 16~19초로
+  이름과 무관하게 느림 — 기존엔 몰랐던 사실.
+- `deepseek-v4-pro`는 NVIDIA(무료) 18초 vs Fireworks/Together(유료) 1~1.5초 —
+  같은 모델도 호스팅에 따라 속도가 10배 이상 차이 날 수 있음이 실측으로 확인됨.

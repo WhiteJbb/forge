@@ -337,6 +337,82 @@ OpenAI 호환 `/models`가 정상 포맷으로 응답해도, 프로바이더가 
 에러 메시지는 임의의 유니코드를 담을 수 있으므로, 인코딩 실패로 로그 자체가
 죽는 것보다는 이스케이프해서라도 보여주는 쪽이 안전하다.
 
+## 2026-07-11 — 속도 전면 실측 (사용자 요청: "무료 모델들은 너무 느려서 못 써먹겠다")
+
+배경: 신규 유료 프로바이더 모델 tier 분류를 하다가, 사용자가 "일단 기준을 속도로
+좀 잡을까"라고 제안. 코드 확인 결과 `scheduler.py::_score()`가 `capability_seed`의
+`speed` 필드를 아예 읽지 않는다는 걸 발견(dead data — task별로 code/debug/refactor/
+docs만 참조). 실제로 라우팅에 영향 주는 속도 요소는 `tier`(가중치 10%, 기본
+그룹 순서도 결정)와 실측 EWMA latency(가중치 15%, `>=2000ms`면 무조건 0점 — 2.1초와
+180초를 구분 못함) 둘뿐. forge.yaml에 이미 이 문제를 다룬 전례가 있었다(2026-07-09
+주석: "신호 기반 자동 계층화" — `tier`는 실력 순위로 유지하고 `default` 정책의
+`prefer` 순서로 속도를 따로 챙기는 방식). 사용자와 확인해 **기존 구조를 그대로
+확장**하기로 결정(tier 재정의 아님) — 새 프로바이더뿐 아니라 기존 무료 프로바이더
+(cerebras/gemini/sambanova)도 같이 재는 걸로 범위 확장.
+
+측정 방법: 실키가 있는 provider(cerebras/gemini/sambanova/fireworks/cohere)는
+`litellm.acompletion(..., stream=True)`로 직접 스트리밍 호출해 TTFT(첫 청크까지)와
+`content`/`reasoning_content` 글자 수를 따로 집계(콘텐츠 방출량으로 tok/s 근사,
+reasoning 토큰과 혼동 방지). 키가 없는 x.ai 개별 모델(Together는 이미 §2026-07-10
+"실키 검증"에서 위치 확인)과 Together는 Artificial Analysis(3rd-party 속도
+벤치마크)로 조사.
+
+### 실측 결과 (TTFT 기준 정렬)
+
+| 모델 | TTFT | 방식 | 비고 |
+| --- | --- | --- | --- |
+| nvidia:mistralai/mistral-small-4-119b-2603 (무료, tier3) | 0.4s | 실측(2026-07-09) | |
+| cohere:command-r7b-12-2024 (유료) | 0.27s | 실측 | 실제 콘텐츠 방출 |
+| cohere:command-a-03-2025 (유료) | 0.36s | 실측 | 실제 콘텐츠 방출, tok/s ~64 |
+| sambanova:gpt-oss-120b (무료) | 0.58s | 실측 | **reasoning-heavy — 120 토큰 예산 내 콘텐츠 0자** |
+| cerebras:gpt-oss-120b (무료) | 0.26s | 실측 | **reasoning-heavy — 콘텐츠 0자** |
+| cerebras:zai-glm-4.7 (무료, tier1 시드) | 0.88s | 실측 | **reasoning-heavy — 콘텐츠 0자** |
+| sambanova:DeepSeek-V3.1 (무료) | 0.67s | 실측 | 실제 콘텐츠 84자 방출 — 무료 중 최선 |
+| xai:grok-build-0.1 (유료) | ~0.52s | AA 3rd-party | tok/s 65.6~74.9 |
+| fireworks:kimi-k2p6/qwen3p7-plus/glm-5p2 (유료) | 0.50~2.14s | 실측 | **reasoning-heavy — 콘텐츠 거의 0** |
+| together:deepseek-ai/DeepSeek-V4-Pro (유료, high effort) | ~1.06s | AA 3rd-party | tok/s ~208, **같은 모델의 nvidia 무료판(18s)보다 17배 빠름** |
+| fireworks:deepseek-v4-pro (유료, tier1 시드) | 1.55s | 실측 | tok/s ~22, 콘텐츠 방출 확인 |
+| nvidia:nemotron-3-super-120b-a12b (무료, tier2) | 2.8s | 실측(2026-07-09) | |
+| nvidia:deepseek-v4-flash (무료, tier2) | 8.6s | 실측(2026-07-09) | |
+| xai:grok-4.5 (유료, tier1 시드) | 13.8~17.4s | AA 3rd-party | reasoning 오버헤드, tok/s ~89.5(도달 후) |
+| gemini:models/gemini-3-flash-preview (무료, tier1 시드) | **16.49s** | 실측 | **"Flash"인데 느림 — 신규 발견** |
+| gemini:models/gemini-3.5-flash (무료, tier2 시드) | **19.17s** | 실측 | tier가 낮은데 오히려 더 느림 |
+| nvidia:deepseek-ai/deepseek-v4-pro (무료, tier1) | 18s | 실측(2026-07-09) | |
+| nvidia:z-ai/glm-5.2 / qwen3.5-397b (무료, tier1) | 180s+ | 실측(2026-07-09) | 기존에 알던 최악 |
+| sambanova:MiniMax-M2.7 (무료 시드였으나) | 측정 불가 | 실측 | **결제수단 필요 에러로 완전히 막힘** — 자유 시드는 유효해도 지금은 호출 자체가 안 됨 |
+
+**교훈 1 — reasoning 모델의 TTFT는 체감 속도를 대표하지 못한다**: cerebras/sambanova의
+`gpt-oss-120b`, fireworks의 `kimi-k2p6`/`qwen3p7-plus`/`glm-5p2`는 TTFT가 0.5~1초로
+빨라 보이지만, 짧은 `max_tokens` 예산에서는 숨은 reasoning 토큰이 예산을 전부 먹어
+치워 사용자에게 보이는 답이 0자였다. "빠르다"를 TTFT 단독으로 판단하면 오판.
+**교훈 2 — 브랜드 이름과 실제 속도는 무관하다**: Gemini "Flash" 계열이 16~19초로,
+이름과 정반대로 이 카탈로그에서 두 번째로 느린 그룹에 속한다. **교훈 3 — 같은
+모델도 호스팅에 따라 속도가 완전히 다르다**: `deepseek-v4-pro`는 NVIDIA(무료)에서
+18초, Fireworks(유료)에서 1.55초, Together(유료)에서 ~1.06초 — 17배 차이.
+
+### 반영 (아키텍처는 그대로, prefer 순서만 확장 — 2026-07-11 사용자 결정)
+
+`tier` 라벨은 여전히 실력 순위(coding 벤치마크)이고, `default`/`heavy-work`/
+`hard-tasks` 정책의 `prefer` 순서만 위 실측을 반영해 확장했다(`forge.yaml`).
+사용자 결정: "무료를 먼저 다 쓰고, 안 되거나 느리면 유료 빠른 모델로" — 그래서:
+
+- **`default`**: 무료 중 빠른 것부터(mistral-small-4 → sambanova:DeepSeek-V3.1 →
+  nemotron-3-super → deepseek-v4-flash) 전부 소진한 뒤에만 유료 빠른 모델
+  (cohere:command-a-03-2025 → xai:grok-build-0.1 → fireworks:deepseek-v4-pro)로
+  넘어간다. glm-5.2/qwen3.5/gemini-3-flash/3.5-flash처럼 확인된 초저속 모델과
+  reasoning-heavy 모델들은 여기 넣지 않고 마지막 tier fallback에만 맡긴다(다른
+  후보가 전부 막혔을 때만 시도되는 안전망).
+- **`heavy-work`/`hard-tasks`**: 여전히 무료 `nvidia:deepseek-v4-pro`를 먼저 쓰고,
+  그게 쿨다운/장애일 때만 같은 모델의 유료 호스팅(`fireworks:deepseek-v4-pro`,
+  17배 빠름)으로 자동 전환 — 기본 요청 과금 정책은 안 바꾸고 복원력만 높였다.
+- **Together `deepseek-ai/DeepSeek-V4-Pro`는 데이터는 확보했지만 prefer에는
+  넣지 않았다** — 사용자 환경에 `TOGETHER_API_KEY`가 없어서 지금 넣으면 매 요청마다
+  "policy route item matches no tier/model" 경고만 반복된다. **Together 키가
+  생기면 세 정책 모두에 추가할 것** (실측 속도 최상위권이라 우선순위 높음).
+- **SambaNova `MiniMax-M2.7`**: capability_seed(모델 품질 시드)는 유지하지만 결제수단
+  없이는 호출이 막혀 실제로는 못 쓴다 — 사용자가 결제수단을 추가하기 전까지는
+  참고 정보로만 취급.
+
 ## 조사 예정
 
 - [ ] litellm SDK의 `stream_options` / usage 청크 동작 방식 (M1-6 착수 전)

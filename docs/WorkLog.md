@@ -4,6 +4,90 @@
 
 ---
 
+## 2026-07-11 — 속도 기반 라우팅 정책 확장 (feat/paid-provider-catalog, 계속)
+
+### 배경
+
+전날 유료 프로바이더 카탈로그 작업에 이어, 사용자가 "지금 새로 들어온 모델들도
+벤치마킹 기준으로 티어 분류 해주고 일단 기준을 속도로 좀 잡을까 무료 모델들은
+너무 느려서 거의 못써먹겠던데"라고 요청. 바로 tier를 다시 매기기 전에 스케줄러
+코드를 먼저 읽었다 — `scheduler.py::_score()`가 실제로 무엇을 읽는지 확인하지
+않고 tier를 재작업하면 헛수고가 될 수 있어서.
+
+### 한 일
+
+1. **스코어링 코드 확인 — `speed` 필드가 dead data임을 발견**: `capability_seed`에
+   정성껏 넣어둔 `speed` 점수(0~10)가 `_score()`의 `TASK_TO_CAPABILITY` 매핑에
+   전혀 등장하지 않음(code/debug/refactor/docs만 참조). 실제 속도 영향 경로는
+   `tier`(가중치 10%, 기본 그룹 순서도 결정)와 실측 EWMA latency(가중치 15%,
+   2000ms 이상은 전부 0점이라 2초와 180초를 구분 못함) 둘뿐.
+2. **기존 전례 발견**: `forge.yaml`을 다시 읽어보니 이미 2026-07-09에 이 문제를
+   한 번 겪었었다 — `default` 정책의 `prefer` 순서가 NVIDIA 무료 모델 중 빠른
+   것만 골라 우선시키고, tier1(glm-5.2/qwen3.5, TTFT 180초+)는 일부러 제외해둔
+   상태였음. `tier`는 실력 순위, 속도는 정책으로 분리하는 기존 설계를 발견하고
+   사용자에게 확인 — "tier 재정의"가 아니라 "정책 prefer 확장"이 맞는 방향임을
+   합의.
+3. **범위 확장 확인**: 신규 유료 4개뿐 아니라 기존 무료 프로바이더(nvidia는 이미
+   측정됐으니 cerebras/gemini/sambanova)까지 같이 재측정하기로 사용자가 범위를
+   넓힘.
+4. **실측**:
+   - Fireworks(deepseek-v4-pro/kimi-k2p6/qwen3p7-plus/glm-5p2), Cohere(command-a-03-2025/
+     command-r7b-12-2024), Cerebras(zai-glm-4.7/gpt-oss-120b), Gemini(gemini-3-flash-preview/
+     gemini-3.5-flash), SambaNova(DeepSeek-V3.1/gpt-oss-120b/MiniMax-M2.7)를 `litellm.
+     acompletion(stream=True)`로 직접 호출해 TTFT + `content`/`reasoning_content` 글자
+     수를 따로 집계. reasoning 모델(cerebras/sambanova의 gpt-oss-120b, fireworks 3종)은
+     TTFT는 빠른데 짧은 max_tokens 예산 안에서 보이는 답이 0자인 경우가 많았음 —
+     숨은 reasoning 토큰이 예산을 다 먹어서. 이걸 놓치면 "TTFT 빠름 = 빨리 씀"으로
+     오판할 뻔했다.
+   - **Gemini "Flash" 계열이 실측 TTFT 16~19초**로 나와서 놀랐다 — 이름과 정반대.
+   - SambaNova `MiniMax-M2.7`은 결제수단 없이는 호출 자체가 막힘(에러로 확인).
+   - x.ai(grok-4.5/grok-build-0.1), Together(deepseek-v4-pro)는 실키/크레딧이 없어
+     서브에이전트로 Artificial Analysis(3rd-party) 조사 — `deepseek-v4-pro`가
+     NVIDIA(무료) 18초 대비 Together/Fireworks(유료)에서 1~1.5초로 10배 이상
+     빠르다는 걸 확인.
+5. **`forge.yaml` 정책 갱신**: `default`/`heavy-work`/`hard-tasks` 세 정책의
+   `prefer` 순서를 실측으로 재작성. 사용자 결정("무료 먼저 다 쓰고, 안 되거나
+   느리면 유료 빠른 모델로")에 따라 `default`는 무료 빠른 것(mistral-small-4 →
+   sambanova:DeepSeek-V3.1 → nemotron-3-super → deepseek-v4-flash) 다음에만 유료
+   빠른 것(cohere:command-a-03-2025 → xai:grok-build-0.1 → fireworks:deepseek-v4-pro)
+   순서. `heavy-work`/`hard-tasks`는 무료 v4-pro를 그대로 우선하고 유료 고속
+   호스팅은 쿨다운 시 대체용으로만 추가.
+   - `together:deepseek-ai/DeepSeek-V4-Pro`를 처음엔 넣었다가, `PolicyEngine.plan()`을
+     직접 호출해 검증하던 중 "policy route item matches no tier/model — ignored"
+     경고를 발견 — 사용자 환경에 `TOGETHER_API_KEY`가 없어서 매 요청마다 헛경고만
+     반복될 상황이었음. 빼고 문서에 "키 생기면 추가" 메모만 남김.
+6. **검증**: `PolicyEngine.plan()`을 세 정책 전부(coding/debug/heavy-work 트리거)에
+   대해 직접 호출해 전 prefer 항목이 경고 없이 실제 등록 모델로 resolve됨을
+   확인. 전체 유닛테스트 235건 재실행, 통과 유지.
+7. **문서**: `docs/Research.md`(2026-07-11 "속도 전면 실측" 섹션, 표+교훈 3개),
+   `docs/DecisionLog.md`(tier 재정의 대신 정책 확장을 택한 이유 + speed dead-data
+   발견 기록), `docs/Plan.md`(S1-S5 작업표), 본 항목.
+
+### 설계 결정
+
+- **`tier`를 속도로 재정의하지 않았다** — `hard-tasks`/`heavy-work` 정책이 "느려도
+  강한 모델을 쓴다"는 의도로 tier1을 명시적으로 prefer하고 있는데, tier의 의미
+  자체를 속도로 바꾸면 그 정책의 의도가 깨진다. 정책 `prefer` 확장이 기존 설계
+  의도를 보존하면서 새 데이터만 반영하는 최소 변경이었다.
+- **Together를 알고도 정책에 안 넣었다** — 데이터는 최상위권(TTFT ~1초, tok/s
+  ~208)이었지만 키가 없는 상태에서 참조하면 매 요청마다 로그만 더러워진다.
+  "확인된 것만, 지금 쓸 수 있는 것만" 원칙을 지켰다.
+
+### 남은 문제 및 다음 할 일
+
+- `speed` capability 필드는 여전히 dead data — 스코어링에 실제로 반영하거나
+  latency 스코어 구간을 세분화(지금은 2초 이상 전부 0점)하는 건 별도 개선 과제.
+- Together AI 키가 생기면 세 정책 모두에 `together:deepseek-ai/DeepSeek-V4-Pro`
+  추가할 것 (실측 최상위권).
+- SambaNova `MiniMax-M2.7`은 결제수단 추가 전까지 실사용 불가 — capability_seed는
+  유지하되 참고 정보로만 취급 중.
+- 이번 실측(TTFT/tok/s)은 각 모델당 1회 샘플이라 변동 가능성 있음(AA 벤치마크도
+  ±10~15% 변동 명시) — 장기적으로는 forge 자체의 텔레메트리 학습 루프(tuner.py)가
+  실제 트래픽 기반으로 보정하겠지만, 지금은 정책 `prefer` 순서가 이 1회 샘플에
+  의존하고 있다는 한계는 남아있음.
+
+---
+
 ## 2026-07-10 — 유료 프로바이더 카탈로그 확장 (feat/paid-provider-catalog)
 
 ### 배경
