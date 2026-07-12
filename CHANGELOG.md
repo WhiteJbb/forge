@@ -7,6 +7,18 @@ pre-1.0 (see [DESIGN.md](DESIGN.md) for the milestone plan); versioning is not y
 
 ## [Unreleased]
 
+### Security
+
+- Secret masking now uses two layers: an extended prefix regex (adds Cerebras `csk-`,
+  x.ai `xai-`, and Fireworks `fw_` to the existing nvapi-/sk-*/gsk_/AIza families) plus
+  exact-value masking of the actual registered keys — covering providers whose keys have
+  no stable public prefix (Together, Cohere, Mistral, SambaNova, Zhipu).
+- CORS is now locked down by default: the previous `allow_origins=["*"]` +
+  `allow_credentials=True` combination reflected any Origin, letting a malicious web page
+  drive the gateway through the browser. The middleware is omitted entirely unless
+  `server.cors_origins` is set, and wildcard origins never send credentials. Non-browser
+  clients (Cline/Aider/Claude Code) are unaffected.
+
 ### Added
 
 - **Multi-API-key rotation**: register several keys for the same provider

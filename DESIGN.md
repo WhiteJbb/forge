@@ -558,7 +558,8 @@ CREATE INDEX idx_rm_model_ts ON request_metrics(model, timestamp);
 
 - **기본 바인딩 `127.0.0.1`** — 무인증 + LAN 노출(`0.0.0.0`)이 기본값이면 공개 즉시 보안 이슈감이다. 외부 바인딩은 명시 설정 + `FORGE_API_KEY` 설정을 필수로 강제.
 - **텔레메트리 없음 + 프롬프트 미저장을 README에 명시** — 메트릭은 수치만 저장하며 프롬프트/응답 본문은 저장하지 않는다. 디버그용 본문 로깅은 opt-in(`logging.capture_bodies: true`) + 로컬 파일 한정. (미착수) 개발자 도구에서 이 한 줄이 신뢰를 만든다.
-- API 키는 환경변수로만 — forge.yaml에 키 문자열이 직접 들어 있으면 부팅 시 경고. 로그·대시보드·에러 응답에서 키 마스킹.
+- API 키는 환경변수로만 — forge.yaml에 키 문자열이 직접 들어 있으면 부팅 시 경고. 로그·대시보드·에러 응답에서 키 마스킹. 마스킹은 **이중 방어**다: (1) 안정적 공개 접두어 계열(nvapi-/sk-*/gsk_/AIza/csk-/xai-/fw_)을 잡는 접두어 정규식, (2) 접두어가 없는 키(Together/Cohere/Mistral 등)를 위해 실제 등록된 키 값을 정확 일치로 치환. 등록은 프로세스 수명 동안 누적한다.
+- **CORS 기본 잠금** — `server.cors_origins`는 기본 비활성(빈 목록)이라 CORS 미들웨어를 아예 붙이지 않는다. 무인증 로컬 모드에서 악성 웹페이지가 브라우저를 경유해 게이트웨이를 호출·응답 탈취하는 것을 차단한다. 브라우저 앱을 붙일 때만 오리진을 명시하며, 와일드카드(`*`)+credentials 조합은 금지된다. 비브라우저 클라이언트(Cline/Aider/Claude Code)는 CORS와 무관하다.
 - 구조화 로깅: PRD 스택대로 structlog로 통일(현재는 stdlib logging), 모든 로그에 `request_id` 상관관계. (미착수)
 
 ---
