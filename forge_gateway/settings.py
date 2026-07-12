@@ -488,6 +488,20 @@ PROVIDER_CATALOG: "list[dict]" = [
 ]
 
 
+def _scan_extra_key_envs(key_env: str) -> "list[str]":
+    """`{key_env}_2`..`{key_env}_9`를 순서대로 스캔해 값이 있는 환경변수 이름만 모은다.
+
+    중간 번호가 비어 있어도(_2 없고 _3 있음) 건너뛰고 계속 스캔한다 — 사용자가 키를
+    회수/추가하며 번호가 듬성듬성해질 수 있으므로 연속성을 요구하지 않는다.
+    """
+    found = []
+    for i in range(2, 10):
+        candidate = f"{key_env}_{i}"
+        if os.environ.get(candidate, "").strip():
+            found.append(candidate)
+    return found
+
+
 def apply_auto_providers(config: "ForgeConfig") -> "list[str]":
     """카탈로그 기반 자동 등록. 추가된 provider 이름 목록을 반환한다."""
     if not config.auto_providers:
@@ -498,21 +512,36 @@ def apply_auto_providers(config: "ForgeConfig") -> "list[str]":
         name = item["name"]
         if name in declared:
             continue  # 명시 선언 우선
+        # 기본 키(key_env)가 없으면 provider 자체를 등록하지 않는다 — _2만 있고 본 키가
+        # 없는 경우도 여기서 걸러진다(단순성 유지, 스펙 §1).
         key_value = os.environ.get(item["key_env"], "").strip()
         if not key_value:
             continue
         api_base = key_value if item.get("api_base_from_env") else item.get("api_base")
-        config.providers.append(ProviderConfig(
+
+        # 멀티 키 로테이션 관례 (DecisionLog 2026-07-12): api_base_from_env 항목(ollama,
+        # 값 자체가 base URL)은 "키"가 아니므로 스캔 대상에서 제외한다.
+        extra_key_envs = (
+            [] if item.get("api_base_from_env") else _scan_extra_key_envs(item["key_env"])
+        )
+
+        provider_kwargs: dict = dict(
             name=name,
             litellm_prefix=item.get("litellm_prefix", "openai"),
             api_base=api_base,
-            api_key_env=None if item.get("api_base_from_env") else item["key_env"],
             discovery=item.get("discovery", True),
             free=item.get("free", False),
             rpm=item.get("rpm"),
             max_concurrent=item.get("max_concurrent"),
             auto_registered=True,
-        ))
+        )
+        if extra_key_envs:
+            provider_kwargs["api_key_envs"] = [item["key_env"]] + extra_key_envs
+        else:
+            provider_kwargs["api_key_env"] = (
+                None if item.get("api_base_from_env") else item["key_env"]
+            )
+        config.providers.append(ProviderConfig(**provider_kwargs))
         for model_id in item.get("default_models", []):
             config.models.append(ModelOverride(id=f"{name}:{model_id}"))
         for model_id, seed in item.get("capability_seed", {}).items():

@@ -219,13 +219,21 @@ class ChatPipeline:
                 if plan is not None:
                     info["policy"] = plan.policy_name
 
-            # 선제 스로틀: dispatch 직전 토큰 소모 — peek과의 race에서 지면 재선택 (§5.13).
+            # 선제 스로틀: dispatch 직전 키 하나를 확보해 토큰 소모 — peek과의 race에서
+            # 지면 재선택 (§5.13). 멀티 키면 acquire가 가용 키 인덱스를 고른다.
             # 직접 지정 모델은 라우팅과 함께 rpm 게이트도 우회한다 (§5.4, 리뷰 #10) —
-            # 사용자가 명시한 모델을 스로틀 사유로 "all models failed"라 답하면 오해를 만든다.
-            if (not forced and self.deps.throttle is not None
-                    and not self.deps.throttle.consume(entry.provider)):
-                exclude.add(entry.id)
-                continue
+            # 사용자가 명시한 모델을 스로틀 사유로 "all models failed"라 답하면 오해를
+            # 만든다. 우회 시에도 키는 골라야 하므로 pick_key(무소모)를 쓴다.
+            key_idx = 0
+            if self.deps.throttle is not None:
+                if forced:
+                    key_idx = self.deps.throttle.pick_key(entry.provider)
+                else:
+                    acquired = self.deps.throttle.acquire(entry.provider)
+                    if acquired is None:
+                        exclude.add(entry.id)
+                        continue
+                    key_idx = acquired
 
             provider = self.deps.providers[entry.provider]
             logger.info(
@@ -236,14 +244,16 @@ class ChatPipeline:
 
             try:
                 if self.stream:
-                    return await self._try_stream(entry, provider, analysis, info, attempt)
-                return await self._try_nonstream(entry, provider, analysis, info, attempt)
+                    return await self._try_stream(entry, provider, analysis, info,
+                                                  attempt, key_idx)
+                return await self._try_nonstream(entry, provider, analysis, info,
+                                                 attempt, key_idx)
 
             except SlotTimeout:
                 # 스로틀 슬롯 포화 — 모델 잘못이 아니므로 health에 귀책하지 않고 (리뷰 #4),
-                # 업스트림에 도달하지 못했으니 rpm 토큰도 반환한다
+                # 업스트림에 도달하지 못했으니 rpm 토큰도 (고른 키에) 반환한다
                 if self.deps.throttle is not None and not forced:
-                    self.deps.throttle.refund(entry.provider)
+                    self.deps.throttle.refund(entry.provider, key_idx)
                 self._record(entry, analysis, info, attempt, 0.0, None, 0, 0,
                              success=False, status_code=None, error_type="throttled")
                 if forced:
@@ -255,6 +265,29 @@ class ChatPipeline:
 
             except (RateLimited, UpstreamServerError, UpstreamTimeout,
                     UpstreamConnectionError, ContextLengthExceeded) as e:
+                # 429 키 귀책 (DecisionLog 2026-07-12): 멀티 키 provider에서 429는
+                # 모델 품질이 아니라 키 할당량의 신호다. 사용한 키만 쿨다운하고,
+                # 남은 가용 키가 있으면 모델은 쿨다운·exclude하지 않고 다음 루프에서
+                # 같은 후보를 다른 키로 재선택되게 한다(세션 핀이 고정, max_attempts가
+                # 루프를 제한). 전 키 소진 시에만 아래 기존 경로로 폴스루해 모델 쿨다운.
+                # 단일 키 provider(num_keys<=1)는 이 분기를 건너뛰어 기존과 완전 동일.
+                if (not forced and self.deps.throttle is not None
+                        and isinstance(e, RateLimited)
+                        and self.deps.throttle.num_keys(entry.provider) > 1):
+                    self.deps.throttle.cooldown_key(
+                        entry.provider, key_idx,
+                        e.retry_after or self.deps.config.scheduler.cooldown_seconds)
+                    if self.deps.throttle.peek(entry.provider):
+                        # 다른 키 가용 — 모델 무귀책. 메트릭만 429로 1회 기록하고 재시도.
+                        self._record(entry, analysis, info, attempt, 0.0, None, 0, 0,
+                                     success=False, status_code=e.status_code,
+                                     error_type="429")
+                        logger.warning(
+                            "req=%s model=%s 429 on key=%d, retrying with another key",
+                            self.request_id, entry.id, key_idx)
+                        continue
+                    # 전 키 소진 → 폴스루: 모델 쿨다운 + exclude (메트릭 이중 기록 금지)
+
                 prev_window = entry.context_window  # 보정 전 창 (리뷰 #2 — 순서 중요)
                 error_type = self.deps.scheduler.record_failure(entry.id, e)
                 self._record(entry, analysis, info, attempt, 0.0, None, 0, 0,
@@ -291,12 +324,14 @@ class ChatPipeline:
     # --- 논스트리밍: 업스트림 호출과 disconnect를 race (§5.13 취소 전파) ---
 
     async def _try_nonstream(self, entry: ModelEntry, provider: Provider,
-                             analysis: AnalysisResult, info: dict, attempt: int):
+                             analysis: AnalysisResult, info: dict, attempt: int,
+                             key_idx: int = 0):
         start = time.monotonic()
         slot_cm = await self._enter_slot(entry.provider)
         try:
             upstream = asyncio.ensure_future(
-                provider.chat(entry.provider_model_id, dict(self.body))
+                provider.chat(entry.provider_model_id, dict(self.body),
+                              key_index=key_idx)
             )
             watcher = asyncio.ensure_future(_watch_disconnect(self.request))
             try:
@@ -337,11 +372,12 @@ class ChatPipeline:
     # --- 스트리밍: 첫 청크 확보 전까지만 failover 가능 (§5.8) ---
 
     async def _try_stream(self, entry: ModelEntry, provider: Provider,
-                          analysis: AnalysisResult, info: dict, attempt: int):
+                          analysis: AnalysisResult, info: dict, attempt: int,
+                          key_idx: int = 0):
         start = time.monotonic()
         payload = dict(self.body)
         slot_cm = await self._enter_slot(entry.provider)
-        agen = provider.chat_stream(entry.provider_model_id, payload)
+        agen = provider.chat_stream(entry.provider_model_id, payload, key_index=key_idx)
 
         # 첫 청크 이전 실패(429/5xx/timeout/TTFT)는 typed 예외로 상위 failover 루프에 전달.
         # 슬롯은 스트림 종료(sse finally)까지 유지 — 실패 시 여기서 즉시 해제.
@@ -412,7 +448,11 @@ class ChatPipeline:
                 elif mid_error is not None:
                     # mid-stream 실패는 진짜 모델 실패다 — health/학습 루프에 반영하지 않으면
                     # 세션이 고장 난 모델에 계속 고정되고 자가 치유가 끊긴다 (리뷰 #1 HIGH).
-                    # 'cancelled'는 클라이언트 disconnect 전용 (§7)
+                    # 'cancelled'는 클라이언트 disconnect 전용 (§7).
+                    # 한계: mid-stream 429는 멀티 키여도 키 귀책하지 않고 모델 귀책한다 —
+                    # 첫 청크를 이미 성공적으로 받은 뒤의 실패는 재시도 불가(§5.8)라 키를
+                    # 바꿔 재선택할 여지가 없고, 여기서 다른 키로 쿨다운을 옮겨도 이번
+                    # 스트림에 이득이 없다 (DecisionLog 2026-07-12 키 귀책은 첫 청크 이전).
                     error_type = pipeline.deps.scheduler.record_failure(entry.id, mid_error)
                     pipeline._record(entry, analysis, info, attempt, latency_ms, ttft_ms,
                                      usage_pt, usage_ct, success=False,

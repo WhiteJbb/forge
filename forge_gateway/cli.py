@@ -165,8 +165,13 @@ def _list_provider_models(
 
 
 def _check_provider(pconf: ProviderConfig, timeouts: TimeoutsConfig) -> dict:
-    key_configured = pconf.api_key_env is not None
-    key_present = bool(pconf.api_key) if key_configured else False
+    # api_key_env_names covers both the single-key (api_key_env) and multi-key
+    # (api_key_envs) contracts (DecisionLog 2026-07-12) — using it here (instead of
+    # reading pconf.api_key_env directly) keeps doctor accurate for both.
+    env_names = pconf.api_key_env_names
+    key_configured = bool(env_names)
+    resolved_keys = pconf.api_keys
+    key_present = bool(resolved_keys) if key_configured else False
 
     ok, count, error = _list_provider_models(pconf, timeouts)
 
@@ -174,9 +179,10 @@ def _check_provider(pconf: ProviderConfig, timeouts: TimeoutsConfig) -> dict:
 
     return {
         "name": pconf.name,
-        "api_key_env": pconf.api_key_env or "-",
+        "api_key_env": env_names[0] if env_names else "-",
         "key_configured": key_configured,
         "key_present": key_present,
+        "key_count": len(resolved_keys),
         "list_models_ok": ok,
         "model_count": count,
         "error": error,
@@ -216,6 +222,9 @@ def cmd_doctor(args: argparse.Namespace) -> int:
             key_set = "n/a"
         status = "FAIL" if r["problem"] else "OK"
         detail = r["error"] or ""
+        if r["key_count"] >= 2:
+            keys_note = f"keys: {r['key_count']}"
+            detail = f"{keys_note} {detail}".strip() if detail else keys_note
         print(
             "{:<15} {:<22} {:<8} {:<8} {:<8} {}".format(
                 r["name"], r["api_key_env"], key_set, r["model_count"], status, detail

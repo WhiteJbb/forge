@@ -8,7 +8,9 @@ from unittest.mock import patch
 
 from forge_gateway.settings import (
     PROVIDER_CATALOG,
+    AwsAuthConfig,
     ConfigError,
+    ProviderConfig,
     load_config,
     load_dotenv,
 )
@@ -350,6 +352,128 @@ class AutoProviderTests(unittest.TestCase):
         self.assertIsNotNone(override)
         self.assertIsNone(override.tier)
         self.assertEqual(override.price_per_mtok, (0.40, 1.60))
+
+
+class ProviderConfigMultiKeyTests(unittest.TestCase):
+    """멀티 API 키 계약 단위 테스트 (DecisionLog 2026-07-12,
+    ProviderConfig.api_key_envs/api_keys/api_key_env_names/AwsAuthConfig)"""
+
+    def setUp(self):
+        env_patch = patch.dict(os.environ, {}, clear=False)
+        env_patch.start()
+        self.addCleanup(env_patch.stop)
+
+    def test_api_key_envs_rejects_literal_key(self):
+        with self.assertRaises(Exception) as ctx:
+            ProviderConfig(name="x", api_key_envs=["nvapi-abcdefghijklmnop"])
+        self.assertIn("environment variable", str(ctx.exception))
+
+    def test_api_key_envs_rejects_duplicate_entry(self):
+        with self.assertRaises(Exception) as ctx:
+            ProviderConfig(name="x", api_key_envs=["A_KEY_ENV", "A_KEY_ENV"])
+        self.assertIn("duplicate", str(ctx.exception))
+
+    def test_api_keys_resolved_in_order_with_blanks_filtered(self):
+        os.environ["MK_A"] = "va"
+        os.environ.pop("MK_B", None)       # unset -> filtered out
+        os.environ["MK_C"] = "   "         # blank after strip -> filtered out
+        os.environ["MK_D"] = "vd"
+        p = ProviderConfig(name="x", api_key_envs=["MK_A", "MK_B", "MK_C", "MK_D"])
+        self.assertEqual(p.api_key_env_names, ["MK_A", "MK_B", "MK_C", "MK_D"])
+        self.assertEqual(p.api_keys, ["va", "vd"])
+
+    def test_api_key_returns_first_resolved_key(self):
+        os.environ["MK_E"] = "ve"
+        os.environ["MK_F"] = "vf"
+        p = ProviderConfig(name="x", api_key_envs=["MK_E", "MK_F"])
+        self.assertEqual(p.api_key, "ve")
+
+    def test_api_key_env_names_falls_back_to_singular_when_no_envs_list(self):
+        p = ProviderConfig(name="x", api_key_env="SOME_ENV")
+        self.assertEqual(p.api_key_env_names, ["SOME_ENV"])
+
+    def test_aws_auth_config_rejects_literal_key(self):
+        with self.assertRaises(Exception) as ctx:
+            AwsAuthConfig(
+                access_key_env="sk-literal-not-an-env-name",
+                secret_key_env="AWS_SECRET_KEY_ENV",
+                region="us-east-1",
+            )
+        self.assertIn("environment variable", str(ctx.exception))
+
+    def test_aws_auth_config_accepts_valid_env_names(self):
+        aws = AwsAuthConfig(
+            access_key_env="AWS_ACCESS_KEY_ID_ENV",
+            secret_key_env="AWS_SECRET_ACCESS_KEY_ENV",
+            region="us-east-1",
+        )
+        self.assertEqual(aws.access_key_env, "AWS_ACCESS_KEY_ID_ENV")
+        self.assertEqual(aws.region, "us-east-1")
+
+    def test_provider_config_accepts_api_version(self):
+        p = ProviderConfig(name="x", api_version="2024-02-01")
+        self.assertEqual(p.api_version, "2024-02-01")
+
+
+class CatalogMultiKeyScanTests(unittest.TestCase):
+    """카탈로그 자동 등록 시 `{KEY_ENV}_2`..`_9` 관례 스캔 (DecisionLog 2026-07-12)"""
+
+    def setUp(self):
+        self._tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmpdir.cleanup)
+        self.path = Path(self._tmpdir.name) / "forge.yaml"
+        self._env = patch.dict(os.environ, {}, clear=False)
+        self._env.start()
+        self.addCleanup(self._env.stop)
+        for item in PROVIDER_CATALOG:
+            os.environ.pop(item["key_env"], None)
+            for i in range(2, 10):
+                os.environ.pop(f"{item['key_env']}_{i}", None)
+
+    def _load(self, yaml_text: str = VALID_YAML):
+        self.path.write_text(yaml_text, encoding="utf-8")
+        return load_config(self.path)
+
+    def test_second_key_sets_api_key_envs(self):
+        os.environ["GROQ_API_KEY"] = "primary"
+        os.environ["GROQ_API_KEY_2"] = "secondary"
+        config = self._load()
+        provider = config.provider("groq")
+        self.assertIsNotNone(provider)
+        self.assertEqual(provider.api_key_envs, ["GROQ_API_KEY", "GROQ_API_KEY_2"])
+        self.assertIsNone(provider.api_key_env)
+        self.assertEqual(provider.api_keys, ["primary", "secondary"])
+
+    def test_gap_in_numbering_is_skipped_not_stopped(self):
+        """_2가 없고 _3이 있으면 _3까지 포함해야 한다 (연속성 요구 없음)"""
+        os.environ["GROQ_API_KEY"] = "primary"
+        os.environ["GROQ_API_KEY_3"] = "third"
+        config = self._load()
+        provider = config.provider("groq")
+        self.assertEqual(provider.api_key_envs, ["GROQ_API_KEY", "GROQ_API_KEY_3"])
+
+    def test_no_extra_key_keeps_singular_api_key_env(self):
+        """회귀: _2가 전혀 없으면 기존처럼 api_key_env 단수로 등록된다"""
+        os.environ["GROQ_API_KEY"] = "primary"
+        config = self._load()
+        provider = config.provider("groq")
+        self.assertEqual(provider.api_key_env, "GROQ_API_KEY")
+        self.assertEqual(provider.api_key_envs, [])
+
+    def test_only_second_key_without_primary_does_not_register(self):
+        os.environ.pop("GROQ_API_KEY", None)
+        os.environ["GROQ_API_KEY_2"] = "secondary"
+        config = self._load()
+        self.assertIsNone(config.provider("groq"))
+
+    def test_ollama_api_base_from_env_is_not_scanned_for_extra_keys(self):
+        os.environ["OLLAMA_API_BASE"] = "http://localhost:11434"
+        os.environ["OLLAMA_API_BASE_2"] = "http://localhost:11435"
+        config = self._load()
+        provider = config.provider("ollama")
+        self.assertIsNotNone(provider)
+        self.assertEqual(provider.api_key_envs, [])
+        self.assertIsNone(provider.api_key_env)
 
 
 if __name__ == "__main__":

@@ -164,6 +164,7 @@ class Provider(Protocol):
 ```
 
 - 구현체는 `LiteLLMProvider` 하나로 충분: `forge.yaml`의 provider 항목(`api_base`, `api_key_env`, `litellm_prefix`)을 받아 인스턴스화.
+- **인증 확장 계약 (2026-07-12)**: `chat`/`chat_stream`은 keyword-only `key_index`를 받아 `api_keys[key_index]`로 호출한다(§5.13 멀티 키). Azure는 `providers[].api_version`, AWS Bedrock은 `providers[].aws: {access_key_env, secret_key_env, session_token_env?, region}` 블록(전부 환경변수 이름만 허용)을 litellm kwargs로 스레딩한다 — 스키마·스레딩까지가 현재 범위이고 카탈로그 등재·실검증은 후속(Roadmap S6).
 - **모델 ID 네임스페이스**: 클라이언트에 보이는 ID는 `provider/model` 그대로 유지하되, Registry가 `forge_id → (provider, provider_model_id)` 매핑을 소유한다. 같은 모델이 두 프로바이더에 있으면 서로 다른 엔트리(예: `nvidia:deepseek-v4-pro`, `openrouter:deepseek-v4-pro`)로 등록해 프로바이더 단위 failover가 자연스럽게 된다.
 - **파라미터 호환성**: `drop_params=True` 기본 — 프로바이더가 지원하지 않는 OpenAI 파라미터(`logit_bias`, `logprobs` 등)는 드롭하고 경고 로그를 남긴다. 미지원 파라미터로 400을 그대로 돌려주면 사용자에게는 "Forge가 고장"으로 보인다.
 - **reasoning 필드 정규화**: thinking 모델의 `reasoning_content` 같은 비표준 필드가 응답/스트림에 섞이면 일부 클라이언트 파서가 깨진다. 기본은 제거(strip), `providers[].pass_reasoning: true`로 통과 허용.
@@ -412,6 +413,7 @@ policies:
 
 - pydantic으로 스키마 검증, 실패 시 부팅 중단(명확한 에러 메시지).
 - `/admin/reload`: 파일 재파싱 → 검증 통과 시에만 원자적 교체(실패 시 기존 설정 유지). Registry는 diff 적용 — 기존 모델의 health 상태는 보존.
+- **원자성의 구현 (2026-07-12)**: 요청 의존성은 불변 `Deps` 스냅샷(`api/deps.py`)이고, reload는 컴포넌트 전체를 새로 조립한 뒤 `DepsRef.current` 참조 하나만 대입한다 — 요청은 시작 시점 스냅샷으로 끝까지 처리되므로 교체 도중에도 신/구 컴포넌트가 섞여 보이지 않는다. health(§5.2)에 더해 **세션 고정 맵과 스로틀 버킷 잔량·세마포어도 이관**한다 — 이관하지 않으면 reload(예: `forge guard` 실행)마다 프롬프트 캐시 적중이 깨지고 rpm 버킷이 가득 찬 상태로 리셋돼 한도를 일시 초과한다. MetricsEngine/Analyzer는 장수 컴포넌트로 재사용.
 - 지면상 위 예시에서는 생략했지만, 실제 스키마에는 최상위 `auto_providers: true`(환경변수 키만 있으면 프로바이더를 자동 등록, §8.1 / 카탈로그는 `settings.py`의 `PROVIDER_CATALOG`) 필드와 `tuner:` 블록(§5.11-3 capability 학습 루프 설정)도 존재한다.
 
 ### 5.10 Dashboard (M3)
@@ -465,6 +467,14 @@ policies:
 - provider 설정의 `rpm`, `max_concurrent` → token bucket + 세마포어.
 - 버킷이 비면 해당 프로바이더의 모델을 일시적으로 후보에서 제외(쿨다운이 아니라 스로틀) — 429를 맞기 전에 트래픽이 다른 프로바이더로 분산된다.
 - 429 리액티브 쿨다운(§5.5)은 안전망으로 유지. 무료 티어 조합 최적화가 Forge의 소구점인 만큼 이 이중화가 차별점이 된다.
+
+**멀티 API 키 로테이션 (2026-07-12, DecisionLog).** 같은 provider에 키 여러 개를 등록해 무료 티어 한도를 곱한다 — §10-32의 구현.
+
+- 설정: `providers[].api_key_envs: [ENV_A, ENV_B, …]` (단수 `api_key_env`와 겸용 시 목록 우선). 카탈로그 자동 등록은 `{KEY_ENV}_2`~`_9` 관례를 스캔한다 — `.env`에 `NVIDIA_API_KEY_2`만 추가하면 로테이션이 켜진다.
+- `rpm`은 **키 하나당** 한도다. token bucket과 429 쿨다운을 키 단위로 관리하고, dispatch 시 가용 키 중 토큰이 가장 많은 키를 고른다(자연 부하분산).
+- **귀책 규칙**: 429는 모델 품질이 아니라 키 할당량의 신호다. 사용한 키만 쿨다운(Retry-After 존중)하고, 남은 가용 키가 있으면 모델을 exclude/쿨다운하지 않고 같은 후보를 다른 키로 재시도한다. 전 키 소진 시에만 기존처럼 모델 즉시 쿨다운. 단일 키 provider는 기존 동작과 완전 동일(하위 호환).
+- `max_concurrent` 세마포어는 키가 아니라 인프라 동시성이므로 provider 단위 유지.
+- probe/list_models/embeddings는 대표 키(첫 번째)만 사용한다.
 
 **graceful shutdown.** SIGTERM/Ctrl-C 시: 신규 요청 거부(503) → 진행 중 요청 drain(상한 30s) → metrics 큐 flush → 종료. write-behind 큐(§5.7)가 유실되지 않기 위한 조건.
 
@@ -606,8 +616,8 @@ CREATE INDEX idx_rm_model_ts ON request_metrics(model, timestamp);
 28. ~~Next.js Dashboard~~ → **완료** — **내장 정적 SPA**로 구현 (§5.10 결정, `/dashboard/ui`, 2026-07-09)
 29. ~~Prometheus exporter (`/metrics` 전환, JSON → `/v1/stats`)~~ → **완료**
 30. PostgreSQL Repository 구현체 — **보류** (사용자 결정, DecisionLog 2026-07-09 "M3 범위 결정": 단일 로컬 사용자는 SQLite로 충분, Repository 인터페이스만 준비)
-31. Redis StateStore (멀티 인스턴스 필요 시에만) — **보류** (사용자 결정, 상동)
-32. 멀티 API 키 로테이션 — 같은 프로바이더에 복수 키를 등록해 무료 티어 한도를 곱함 (스로틀 버킷을 키 단위로 확장, §5.13) — 후속 유지
+31. Redis StateStore — ~~보류~~ → **로드맵 제외** (사용자 결정, DecisionLog 2026-07-12: 멀티 인스턴스 수요 없음)
+32. ~~멀티 API 키 로테이션~~ → **완료** (2026-07-12) — 같은 프로바이더에 복수 키를 등록해 무료 티어 한도를 곱함 (스로틀 버킷·429 쿨다운을 키 단위로 확장, §5.13)
 33. A/B 테스팅, AI Judge — 별도 설계 후 착수 — 후속 유지
 
 ### M3 후속: UX 스프린트 (U1-U5, docs/Plan.md) — 완료 (2026-07-09)

@@ -74,6 +74,8 @@ class ScriptedProvider:
         self.config = config
         self._scripts = {k: list(v) for k, v in scripts.items()}
         self.calls: list[tuple[str, str]] = []
+        # 멀티 키 로테이션 검증용 — 각 chat/chat_stream 호출에서 받은 key_index 기록
+        self.key_indices: list[int] = []
 
     def _pop(self, provider_model_id):
         queue = self._scripts.get(provider_model_id)
@@ -81,15 +83,17 @@ class ScriptedProvider:
             raise AssertionError(f"no scripted action left for {provider_model_id!r}")
         return queue.pop(0)
 
-    async def chat(self, provider_model_id, payload):
+    async def chat(self, provider_model_id, payload, *, key_index=0):
         self.calls.append((provider_model_id, "chat"))
+        self.key_indices.append(key_index)
         action = self._pop(provider_model_id)
         if isinstance(action, BaseException):
             raise action
         return action
 
-    async def chat_stream(self, provider_model_id, payload):
+    async def chat_stream(self, provider_model_id, payload, *, key_index=0):
         self.calls.append((provider_model_id, "chat_stream"))
+        self.key_indices.append(key_index)
         action = self._pop(provider_model_id)
         if isinstance(action, BaseException):
             raise action
