@@ -1,5 +1,20 @@
 # Decision Log
 
+## 2026-07-12 — 섀도 평가 열린 결정 확정 + 보안 2건 즉시 착수
+
+**결정** (사용자 확정, [ShadowEvaluation.md](ShadowEvaluation.md) §9):
+- 섀도 평가는 **무료 기본, 유료 opt-in** — `daily_budget_usd > 0` 설정 시 유료
+  도전자/judge 허용. **대시보드에서 토글·예산·judge 모델 선택이 가능해야 한다**
+  (구현 계약 §9.1 — `forge.local.yaml` 오버레이 + `/admin/shadow`, guard/U5 전례 재사용).
+- judge는 자동 선정 기본 + 대시보드에서 명시 선택 가능.
+- 진짜 A/B(실트래픽 직접 라우팅) 2단계는 보류 유지.
+- 전면 분석에서 발견한 보안 2건(시크릿 마스킹 신규 키 형식 미커버, CORS
+  `*`+credentials)은 로드맵 S1을 기다리지 않고 즉시 구현 (fix/security-hardening).
+
+**이유**: 유료 사용자도 섀도 평가의 수혜자여야 하지만 과금은 명시적 동의
+뒤에만 — 예산 하드 컷과 `allow_paid` guard 상속이 이중 안전장치. 대시보드 제어는
+"forge.yaml을 손으로 안 고친다"는 U5 방향의 연장.
+
 ## 2026-07-12 — 멀티 인스턴스(StateStore/Redis) 로드맵 제외, F1–F4 착수
 
 **결정**: 전면 분석([Roadmap.md](Roadmap.md)) 후 사용자 결정 — 멀티 인스턴스 대비

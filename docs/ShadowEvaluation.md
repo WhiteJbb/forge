@@ -128,26 +128,43 @@ CREATE INDEX idx_se_pair ON shadow_evals(champion, challenger, task_type);
 - tier는 건드리지 않는다 (2026-07-11 결정 유지: tier 승격은 사람 검토 사항.
   단, wr가 지속적으로 극단이면 대시보드에 "tier 재검토 후보" 배지로만 노출).
 
-## 9. 열린 결정 (착수 전 사용자 확인)
+## 9. 열린 결정 — 2026-07-12 사용자 확정
 
-| # | 질문 | 기본 권고 |
+| # | 질문 | 결정 |
 | --- | --- | --- |
-| ① | 유료 모델을 도전자/judge로 허용할지 (`daily_budget_usd > 0`) | 1단계는 무료만 — 예산 기능은 스키마만 준비 |
-| ② | judge 자동 선정 vs 명시 지정 강제 | 자동 선정 + 대시보드에 현재 judge 표시 |
-| ③ | 진짜 A/B(실트래픽 1~5%를 도전자로 직접 라우팅, 사용자 재시도율 관측)로의 2단계 확장 | 보류 — 섀도 데이터가 쌓인 뒤 별도 결정. 실사용자 경험을 실험에 노출하는 것은 성격이 다른 결정 |
-| ④ | Anthropic dialect 요청도 섀도 대상에 포함할지 | 포함 (변환 후 내부 포맷 동일 — 제외할 이유 없음) |
+| ① | 유료 모델을 도전자/judge로 허용할지 | **무료 기본, 유료는 opt-in** — `daily_budget_usd`를 0보다 크게 설정하면 유료 도전자/judge 허용. **대시보드에서 토글·예산 설정 가능해야 함** (§9.1) |
+| ② | judge 자동 선정 vs 명시 지정 | **자동 선정 기본 + 대시보드에서 judge 모델을 명시 선택 가능** (유료 모델 포함 — 단 예산 가드 하에서만) |
+| ③ | 진짜 A/B(실트래픽 일부를 도전자로 직접 라우팅) 2단계 확장 | **보류 유지** — 섀도 데이터 축적 후 별도 결정 (사용자 확인) |
+| ④ | Anthropic dialect 요청 포함 여부 | 포함 (기본 권고 채택) |
+
+### 9.1 대시보드 런타임 제어 (결정 ①·② 구현 계약)
+
+사용자가 forge.yaml을 손으로 고치지 않고 대시보드에서 섀도 평가를 제어한다.
+기존 전례를 그대로 확장: **`forge guard`가 쓰는 `forge.local.yaml` 오버레이 +
+자동 reload** 메커니즘 (U5, 2026-07-09) — 새 채널을 만들지 않는다.
+
+- `POST /admin/shadow` (loopback + 키 이중 검증, 기존 /admin 계약): body
+  `{enabled, daily_budget_usd, judge_model?, sample_rate?}` → `forge.local.yaml`의
+  `shadow:` 블록을 다시 쓰고 reload 트리거. CLI 대응 `forge shadow --on/--off/--budget/--judge`.
+- 대시보드 "Model Arena" 섹션에 제어 UI: on/off 토글, 예산 입력(USD/일, 0 = 무료만),
+  judge 선택 드롭다운(등록 모델 중 선택, "auto" 기본 — 유료 모델 선택 시 예산이 0이면
+  경고하고 거부). 현재 소진액/잔여 예산 표시.
+- 안전장치: 예산 > 0으로 켜는 행위는 과금 동의다 — 토글 시 확인 문구 + 서버 로그
+  1회. `allow_paid: false` guard 정책이 있으면 유료 도전자/judge는 예산과 무관하게
+  제외(기존 constraints가 섀도 후보 선정에도 동일 적용).
 
 ## 10. 구현 분해 (Roadmap S5, Opus 위임 단위)
 
 | 모듈 | 내용 | 난이도 |
 | --- | --- | --- |
 | `core/shadow.py` | Sampler + Runner + Judge 오케스트레이션 (백그라운드 태스크, tuner._loop 패턴 재사용) | ★★ |
-| settings 확장 | `shadow:` 블록 스키마 + 검증 | ★ |
+| settings 확장 | `shadow:` 블록 스키마 + 검증 + forge.local.yaml 오버레이 지원 | ★ |
 | storage | shadow_evals 테이블 + repo 메서드 (기존 Repository 패턴) | ★ |
 | tuner v2 | win-rate 집계 + 가중 결합 | ★★ |
 | pipeline 훅 | `_record` 직후 fire-and-forget 1곳 | ★ |
-| 대시보드 | Model Arena 섹션 (win-rate 매트릭스) | ★★ |
-| 테스트 | 시뮬레이터에 judge 시나리오 추가 — 편향 방어(순서 랜덤화) 결정론 검증 포함 | ★★ |
+| `POST /admin/shadow` + `forge shadow` CLI | 런타임 제어 (§9.1) — guard/U5 패턴 재사용 | ★ |
+| 대시보드 | Model Arena 섹션: win-rate 매트릭스 + 제어 UI(토글/예산/judge 선택, §9.1) | ★★ |
+| 테스트 | 시뮬레이터에 judge 시나리오 추가 — 편향 방어(순서 랜덤화) 결정론 검증, 예산 하드 컷, `allow_paid:false` 상속 | ★★ |
 
 **완료 기준(DoD)**: 섀도 평가가 켜진 상태에서 실요청 p95 지연 변화 0(±측정 오차),
 무료-only 모드에서 비용 0 확인, win-rate가 tuner 보정에 반영되는 E2E, 프롬프트
