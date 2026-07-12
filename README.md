@@ -1,74 +1,120 @@
+<div align="center">
+
 # Forge
 
-> Intelligent AI Gateway for Coding Agents — point every coding agent at one endpoint, and stop thinking about models.
+### The local AI gateway that picks the right model for every coding task.
 
-Forge sits between your coding agents (Cline, Aider, Continue, …) and your LLM providers. It analyzes each request, picks the best available model for the task, and fails over transparently when a model is rate-limited or down.
+Point Claude Code, Cline, Aider, Continue, or any OpenAI-compatible agent at one endpoint. Forge routes each request by task, capability, cost, and live health—then fails over before your agent notices.
+
+[![PyPI](https://img.shields.io/pypi/v/forge-gateway?color=2563eb&label=PyPI)](https://pypi.org/project/forge-gateway/)
+[![Python](https://img.shields.io/pypi/pyversions/forge-gateway?color=3776ab)](https://pypi.org/project/forge-gateway/)
+[![License](https://img.shields.io/github/license/WhiteJbb/forge?color=22c55e)](LICENSE)
+
+[Quickstart](#quickstart) · [Why Forge](#why-forge) · [Connect an agent](#connect-your-coding-agent) · [Configuration](#control-cost-with-policies) · [Roadmap](docs/Roadmap.md)
+
+</div>
 
 ```text
-Cline / Aider / Continue / RooCode ──▶ localhost:4000 ──▶ Forge ──▶ best model right now
+Claude Code / Cline / Aider / Continue
+                  │
+                  ▼  OpenAI or Anthropic API
+          http://localhost:4000
+                  │
+                  ▼
+               Forge
+      analyze → filter → score → route
+                  │
+        ┌─────────┼─────────┐
+        ▼         ▼         ▼
+     NVIDIA   OpenRouter   Ollama   … 13 more providers
 ```
 
-**Why not just LiteLLM?** LiteLLM routes by model group. Forge routes by **request content**: it detects what you're doing (refactoring? debugging? writing docs?), filters out models that can't handle the request (no function calling? context too small?), keeps a conversation pinned to one model for prompt-cache hits, and scores the rest on live health, latency, and capability. Every routing decision is explainable — no black-box learned router.
+> **Alpha · v0.3.0.** The core gateway, streaming failover, policy engine, Anthropic compatibility, dashboard, and Prometheus metrics are working. Forge is pre-1.0, so configuration may still change between releases.
 
-> **Status: pre-release (v0.3-dev).** Core routing, failover, policies, Anthropic-format support, and the browser dashboard all work. Expect breaking changes.
+## Why Forge?
 
-## Features
+Most gateways ask you to choose a model or model group. Forge lets your coding agent request **`auto`** and makes the decision from the request itself.
 
-- **OpenAI-compatible API** — `/v1/chat/completions` (streaming included), `/v1/embeddings`, `/v1/models`
-- **Anthropic-compatible API** — `/v1/messages` with full streaming-event and tool-use conversion, so Claude Code can use any provider behind Forge
-- **Policy engine** — manage *policies*, not models: first-match YAML rules pick candidate pools by task/client/context size, with hard constraints like `allow_paid: false`
-- **Task-aware routing** — request analysis → capability matrix → best model, with `auto:refactor`-style hints when you know better
-- **Hard compatibility filter** — requests needing tools / JSON mode / vision / large context never land on a model that can't serve them
-- **Session affinity** — the same conversation stays on the same model (prompt-cache hits, consistent behavior); moves only on failover
-- **Proactive rate limiting** — per-provider token buckets steer traffic away *before* the 429 happens; reactive cooldowns remain as the safety net
-- **Self-healing failover** — 429 → instant cooldown (honors `Retry-After`) → next candidate; context-overflow → retry on a bigger-context model; all invisible to the client
-- **Explainable decisions** — `POST /v1/route/explain` dry-runs any request and shows the matched policy, every exclusion reason, and the score table
-- **Auto discovery & hot reload** — new provider models register at boot; edit `forge.yaml` and `POST /admin/reload` without dropping in-flight requests
-- **Real metrics** — per-model latency (TTFT for streams), success rate, token usage, cost — stored locally in SQLite
+- **Task-aware routing** — detects coding, debugging, refactoring, documentation, and testing work, then ranks models by the relevant capability.
+- **Failover your agent does not see** — rate limits, timeouts, unavailable models, and context overflow move the request to the next compatible candidate.
+- **Free-tier pooling** — proactive per-key rate limits and multi-key rotation stretch free provider quotas without sending paid traffic when `--no-paid` is enabled.
+- **Explainable, not magical** — every exclusion and score is visible through `/v1/route/explain`; routing is deterministic and configurable.
+- **Coding-agent compatibility** — serves both OpenAI and Anthropic APIs, including streaming and tool use, from the same local process.
+- **Private by default** — runs on your machine, stores numeric metrics only, and sends no Forge telemetry.
+
+Forge uses LiteLLM as its provider adapter. It is not trying to replace LiteLLM's broad platform surface; it adds an opinionated scheduler for local coding-agent traffic.
 
 ## Quickstart
 
-Requires Python 3.10+.
+Requires Python 3.10+. Install and start Forge in about two minutes:
+
+```bash
+pip install forge-gateway
+
+export NVIDIA_API_KEY=nvapi-...   # PowerShell: $env:NVIDIA_API_KEY="nvapi-..."
+forge init
+forge doctor
+forge start
+```
+
+Then open [http://127.0.0.1:4000/dashboard/ui](http://127.0.0.1:4000/dashboard/ui), or verify the gateway:
+
+```bash
+curl http://127.0.0.1:4000/health
+```
+
+`forge init` creates `forge.yaml`. Provider keys are read from the environment or a local `.env` file—never from the YAML itself. If the `forge` command conflicts with Foundry, use the identical `forge-gw` alias.
+
+<details>
+<summary><strong>Install from source</strong></summary>
 
 ```bash
 git clone https://github.com/WhiteJbb/forge.git
 cd forge
 python -m venv .venv
-.venv/Scripts/pip install -e .     # Windows  (macOS/Linux: .venv/bin/pip install -e .)
 
-export NVIDIA_API_KEY=nvapi-...    # or put it in .env
-forge doctor                       # check keys & provider connectivity
-forge start
+# macOS / Linux
+.venv/bin/pip install -e .
+
+# Windows
+.venv\Scripts\pip install -e .
 ```
 
-Forge listens on `http://127.0.0.1:4000`. Check `http://127.0.0.1:4000/health` to see your model pool, or run `forge models` for an offline view. No config yet? `forge init` generates a `forge.yaml` from the API keys it finds in your environment.
-
-> If the `forge` command collides with Foundry's on your PATH, use the `forge-gw` alias.
-
-Configuration lives in [`forge.yaml`](forge.yaml) — providers, model tiers/capabilities, policies, cooldowns, timeouts. It ships with a working NVIDIA free-tier setup.
-
-**Adding a provider is just an API key.** Drop `OPENROUTER_API_KEY` / `GROQ_API_KEY` / `MISTRAL_API_KEY` / `DEEPSEEK_API_KEY` / `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` / `CEREBRAS_API_KEY` / `SAMBANOVA_API_KEY` / `GEMINI_API_KEY` / `ZAI_API_KEY` / `XAI_API_KEY` / `COHERE_API_KEY` / `TOGETHER_API_KEY` / `FIREWORKS_API_KEY` (or `OLLAMA_API_BASE`) into `.env` and Forge auto-registers the provider at startup — models are discovered and join the routing pool automatically. Explicit `forge.yaml` entries always take precedence; set `auto_providers: false` to opt out. Keep paid spend in check with an `allow_paid: false` or `max_cost_per_request` policy — or skip the YAML and run `forge guard --no-paid` / `forge guard --max-cost 0.01` (see [CLI](#cli) below).
-
-Got a second key for the same provider (e.g. a second free-tier NVIDIA account)? Drop `NVIDIA_API_KEY_2` (up through `_9`) into `.env` and Forge picks it up automatically — no `forge.yaml` edit needed. Each key gets its own per-key rate bucket, so the rpm limit effectively multiplies per extra key, and a 429 only cools down the exhausted key (round-robin continues on the rest) instead of benching the whole model.
-
-Free-tier providers Forge recognizes out of the box: NVIDIA, Cerebras, and Gemini all default to a no-cost path until you attach billing (`allow_paid: false` keeps you there). OpenRouter's `:free`-suffixed models are priced at $0 regardless of provider billing state. Z.ai (GLM) mixes free and paid models on the same key, so it's registered without a blanket free flag — see `.env.example` for how to pin a specific free model (e.g. GLM-4.7-Flash) with a `models:` price override. **SambaNova is not free** — its "no card required" tier is a one-time ~$5 trial credit, not a recurring free tier (verified 2026-07-09, see [Research.md](docs/Research.md)); it's registered as a paid provider and excluded by `allow_paid: false`.
-
-A handful of standout free models (e.g. `cerebras:zai-glm-4.7`, `gemini:models/gemini-3-flash-preview`) are also pre-seeded with benchmark-based tier/capability scores as soon as their provider registers — no `forge.yaml` edits needed. See [Research.md](docs/Research.md) for sources.
-
-x.ai (Grok), Cohere, Together AI, and Fireworks AI round out the paid side of the catalog. Prices for their pre-seeded models (e.g. `xai:grok-4.5`, `together:deepseek-ai/DeepSeek-V4-Pro`, `fireworks:accounts/fireworks/models/deepseek-v4-pro`) are sourced directly from each provider's official pricing page rather than trusted from LiteLLM's bundled cost table — see [Research.md](docs/Research.md) 2026-07-10 for citations. Models without an officially-confirmed price or coding benchmark (e.g. Cohere's current flagship) are registered without a seed and fall back to LiteLLM's cost table or `unknown`. AWS Bedrock and Azure OpenAI aren't supported yet — both need per-resource credentials/config that don't fit the single-API-key catalog pattern.
+</details>
 
 ## Connect your coding agent
 
-Use model **`auto`** and let Forge choose, or `auto:debug` / `auto:refactor` / `auto:documentation` / `auto:testing` to force a task type. Unless you set `FORGE_API_KEY`, the API key can be any non-empty string.
+Use model **`auto`** and Forge will choose. Use `auto:debug`, `auto:refactor`, `auto:documentation`, or `auto:testing` when you want to supply the task explicitly.
 
-**Cline (VS Code)** — Settings → API Provider: *OpenAI Compatible*
+### Claude Code
+
+```bash
+export ANTHROPIC_BASE_URL=http://127.0.0.1:4000
+export ANTHROPIC_API_KEY=forge
+```
+
+Forge accepts the Anthropic Messages API and converts streaming events and tool calls for the selected provider.
+
+### Cline / Roo Code
+
+Choose **OpenAI Compatible**, then enter:
+
 ```text
 Base URL: http://127.0.0.1:4000/v1
 API Key:  forge
 Model ID: auto
 ```
 
-**Continue** — `config.json`:
+### Aider
+
+```bash
+export OPENAI_API_BASE=http://127.0.0.1:4000/v1
+export OPENAI_API_KEY=forge
+aider --model openai/auto
+```
+
+### Continue
+
 ```json
 {
   "models": [{
@@ -81,60 +127,165 @@ Model ID: auto
 }
 ```
 
-**Aider**
-```bash
-export OPENAI_API_BASE=http://127.0.0.1:4000/v1
-export OPENAI_API_KEY=forge
-aider --model openai/auto
+Unless `FORGE_API_KEY` is set, clients may use any non-empty placeholder API key. Every response identifies the decision in `X-Forge-Model`, `X-Forge-Tier`, `X-Forge-Task`, and `X-Forge-Attempt` headers.
+
+## How a request gets routed
+
+```text
+1. Analyze     "Fix this race condition" → task=debug
+2. Constrain   Apply the first matching policy and its spending limits
+3. Filter      Remove models without tools, vision, JSON mode, or enough context
+4. Affinity    Keep an existing conversation on its model when possible
+5. Score       Rank by task capability, health, latency, availability, and cost
+6. Recover     On 429/5xx/timeout, cool down the failing key or model and retry
 ```
 
-**Claude Code**
+Preview the complete decision without calling a provider:
+
 ```bash
-export ANTHROPIC_BASE_URL=http://127.0.0.1:4000
-export ANTHROPIC_API_KEY=forge        # or your FORGE_API_KEY
+curl http://127.0.0.1:4000/v1/route/explain \
+  -H "Content-Type: application/json" \
+  -d '{"model":"auto","messages":[{"role":"user","content":"Refactor this parser"}]}'
 ```
-Claude Code speaks the Anthropic Messages API; Forge converts it (tool use and streaming events included) and routes to whatever provider your policies choose.
 
-Every response carries routing metadata in headers: `X-Forge-Model`, `X-Forge-Tier`, `X-Forge-Task`, `X-Forge-Attempt`.
+The response includes the detected task, matched policy, every rejected model and reason, plus the final score table.
 
-## Endpoints
+## What ships today
+
+| Capability | What Forge does |
+| --- | --- |
+| OpenAI API | Chat completions, streaming, embeddings, and model listing |
+| Anthropic API | Messages, streaming events, image blocks, and tool-use conversion |
+| Smart scheduler | Hard compatibility filters, task scoring, session affinity, and context-aware failover |
+| Reliability | First-chunk streaming failover, proactive throttling, `Retry-After` cooldowns, and hot reload |
+| Cost controls | Free/paid classification, per-request caps, local spend guards, and cost tracking |
+| Observability | Built-in dashboard, recent request feed, SQLite metrics, routing explanations, and Prometheus |
+| Model learning | Runtime success data adjusts capability scores and demotes unreliable feature claims |
+
+## Providers
+
+Adding a provider is usually one environment variable. Forge auto-registers it, discovers models when the upstream supports discovery, and merges any benchmark-backed capability seeds.
+
+| | Providers |
+| --- | --- |
+| Free/local paths | NVIDIA, Cerebras, Gemini, OpenRouter `:free` models, Ollama |
+| Additional providers | Anthropic, OpenAI, Groq, Mistral, DeepSeek, SambaNova, Z.ai, xAI, Cohere, Together AI, Fireworks AI |
+
+```bash
+# Add another provider—no forge.yaml edit required
+export OPENROUTER_API_KEY=sk-or-...
+
+# Add another key for the same provider
+export NVIDIA_API_KEY_2=nvapi-...
+forge reload
+```
+
+Each provider key receives its own rate bucket. A 429 cools only the exhausted key; Forge tries the remaining keys before cooling down the model itself.
+
+> “Free” means the provider currently offers a zero-cost path without billing attached; provider terms can change. Unknown-price models are treated conservatively and excluded by `--no-paid`. See the sourced notes in [Research.md](docs/Research.md).
+
+## Control cost with policies
+
+For the common case, no YAML editing is required:
+
+```bash
+forge guard --no-paid          # never route to paid or unknown-price models
+forge guard --max-cost 0.01    # cap estimated cost per request in USD
+forge guard --allow-paid       # remove the no-paid constraint
+forge guard --off              # remove the local spend guard
+```
+
+For task-specific control, policies in `forge.yaml` are evaluated in order:
+
+```yaml
+policies:
+  - name: free-documentation
+    when:
+      task: [documentation]
+    route:
+      prefer: [tier2]
+      fallback: [tier3]
+    constraints:
+      allow_paid: false
+
+  - name: default
+    route:
+      prefer: [tier1]
+      fallback: [tier2, tier3]
+```
+
+Apply changes without interrupting in-flight requests:
+
+```bash
+forge reload
+forge policies
+```
+
+See the commented, working [forge.yaml](forge.yaml) for provider, model, timeout, cooldown, and routing examples.
+
+## API and CLI
+
+<details>
+<summary><strong>HTTP endpoints</strong></summary>
 
 | Endpoint | Description |
 | --- | --- |
-| `POST /v1/chat/completions` | OpenAI-compatible chat, streaming + transparent failover |
-| `POST /v1/messages` | Anthropic-compatible chat (Claude Code) |
-| `POST /v1/route/explain` | Dry-run: matched policy, exclusion reasons, score table |
-| `POST /v1/embeddings` | Embeddings (explicit model id) |
-| `GET /v1/models` | Model pool + `auto` aliases |
-| `GET /health` | Gateway + per-model health |
-| `GET /v1/stats` | Usage / latency / cost metrics (JSON) |
-| `GET /v1/stats/recent` | Recent request feed (JSON) — "why did that request go there?" |
-| `GET /dashboard` | Dashboard data (JSON), incl. throttle state |
-| `GET /dashboard/ui` | Browser dashboard (built-in static SPA) |
+| `POST /v1/chat/completions` | OpenAI-compatible chat, streaming, and failover |
+| `POST /v1/messages` | Anthropic-compatible Messages API |
+| `POST /v1/route/explain` | Dry-run a routing decision |
+| `POST /v1/embeddings` | Embeddings with an explicit model ID |
+| `GET /v1/models` | Discovered model pool and `auto` aliases |
+| `GET /health` | Gateway and per-model health |
+| `GET /v1/stats` | Usage, latency, and cost metrics |
+| `GET /v1/stats/recent` | Recent routing and failover decisions |
+| `GET /dashboard/ui` | Built-in browser dashboard |
 | `GET /metrics` | Prometheus-format metrics |
-| `POST /admin/reload` | Hot-reload `forge.yaml` (loopback only) |
-| `POST /admin/cooldown/{model}/clear` | Manually clear a cooldown (loopback only) |
+| `POST /admin/reload` | Hot-reload configuration; loopback only |
 
-## CLI
+</details>
+
+<details>
+<summary><strong>CLI commands</strong></summary>
 
 | Command | Description |
 | --- | --- |
-| `forge start` | Start the server |
-| `forge init` | Generate a starter `forge.yaml` from detected env keys |
-| `forge doctor` | Check provider keys, connectivity, and model discovery |
-| `forge models` | List models known to the Registry (offline view) |
-| `forge reload` | Hot-reload the running server's config (`POST /admin/reload`) |
-| `forge guard --no-paid` / `--max-cost USD` / `--allow-paid` / `--off` | Manage a local spend guard (`forge.local.yaml`) without hand-editing `forge.yaml` — applies to the running server automatically |
-| `forge policies` | List effective policies in evaluation order |
+| `forge start` | Start the gateway |
+| `forge init` | Generate a starter config from detected provider keys |
+| `forge doctor` | Validate config, credentials, connectivity, and discovery |
+| `forge models` | List configured models and capabilities |
+| `forge reload` | Reload a running gateway |
+| `forge guard` | View or change the local spending guard |
+| `forge policies` | Show effective policies in evaluation order |
 
-## Privacy
+</details>
 
-Forge runs entirely on your machine. **No telemetry, ever.** Prompt and response bodies are never stored — metrics keep numbers only (latency, token counts, status codes). API keys are read from environment variables and never written to disk or logs.
+## Forge or LiteLLM?
 
-## Roadmap
+Choose **Forge** when you want a small, local, opinionated gateway for coding agents: the client asks for `auto`, the request content influences the model choice, free quotas are pooled, and the full decision is inspectable.
 
-See [DESIGN.md](DESIGN.md) — up next: a PostgreSQL storage backend and Redis-backed `StateStore` for multi-instance deployments, multi-API-key rotation per provider (multiply free-tier limits), and A/B testing / an AI Judge for capability scoring.
+Choose **LiteLLM Proxy** when you need the broadest provider and enterprise gateway surface, virtual keys, teams, budgets, or production-scale deployment features. Forge already uses LiteLLM internally for provider compatibility; the projects solve different layers of the problem.
+
+## Privacy and security
+
+- Forge has no telemetry and no hosted control plane.
+- Prompt and response bodies are never persisted; metrics contain numbers and routing metadata only.
+- Provider secrets come from environment variables and are masked in logs.
+- The server binds to `127.0.0.1` by default. Set `FORGE_API_KEY` before exposing it beyond loopback.
+
+## Project status
+
+Forge is actively developed and available on [PyPI](https://pypi.org/project/forge-gateway/). Near-term work focuses on routing-quality evaluation, protocol compatibility, CI/release hardening, and a shadow-evaluation loop—not expanding into a general enterprise gateway.
+
+Read the [6-month roadmap](docs/Roadmap.md), [architecture](DESIGN.md), [changelog](CHANGELOG.md), and [research notes](docs/Research.md) for the full rationale and current decisions.
+
+Bug reports, provider compatibility reports, and focused pull requests are welcome in [GitHub Issues](https://github.com/WhiteJbb/forge/issues).
 
 ## License
 
-[MIT](LICENSE)
+[MIT](LICENSE) — use it, modify it, and ship it.
+
+<div align="center">
+
+If Forge saves you from one more manual model switch, consider giving the project a ⭐. It helps other coding-agent users find it.
+
+</div>
