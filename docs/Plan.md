@@ -4,7 +4,28 @@
 > 마일스톤 전체와 설계 근거는 [DESIGN.md](../DESIGN.md) §10이 단일 소스다. 이 문서는 "지금 하는 작업"의 실행 계획만 담는다.
 > M1 기록: [WorkLog.md](WorkLog.md) 2026-07-09 항목 (13/13 완료, main `6e99236`).
 
-## 현재 마일스톤: M3 — 플랫폼화 (진행중)
+## 현재: F1–F4 스프린트 (2026-07-12, [Roadmap.md](Roadmap.md) §2)
+
+배경: 전면 분석([Roadmap.md](Roadmap.md)) 후 사용자 지시 — "멀티 인스턴스 제외하고 F1–F4 진행,
+간단한 구현은 Sonnet·복잡한 구현은 Opus 위임". StateStore(멀티 인스턴스 전제)는 F1에서 제외
+(DecisionLog 2026-07-12).
+
+| # | 작업 | 브랜치 | 담당 | 상태 |
+| --- | --- | --- | --- | --- |
+| F1a | Deps 불변 스냅샷 — `api/deps.py` 분리 + reload 원자적 참조 교체(허브 결합 해소 겸) | feat/contracts-v2 | 직접 | 진행중 |
+| F1b | 멀티 API 키 로테이션 계약 — `api_key_envs` 스키마(+카탈로그 `_2.._9` 관례 스캔), 키 단위 버킷·쿨다운·귀책, Provider 프로토콜 `key_index` | feat/contracts-v2 | 계약 직접 / throttle·pipeline 구현 Opus / 카탈로그·doctor·docs Sonnet | 진행중 |
+| F1c | Bedrock/Azure 수용 auth 스키마 확장(`api_version`, AWS 자격 env 블록) — 스키마+kwargs 스레딩까지, 실제 카탈로그 등재는 S6 | feat/contracts-v2 | 직접 | 진행중 |
+| F3 | 동시성 감사 — reload 시 세션 핀/스로틀 버킷 소실(발견), reload 창(F1a로 해소), 경쟁 재현 테스트 | feat/contracts-v2 | 감사 직접 / 테스트 Opus | 진행중 |
+| F2 | 스코어링 v2 — latency 로그 스케일 구간화(2s 포화 해소), `speed` 시드를 콜드 스타트 prior로 사용, 골든 라우팅 회귀 하네스 | feat/scoring-v2 | 공식 직접 / 골든 테스트 Sonnet | 대기 |
+| F4 | AI Judge / A-B 섀도 라우팅 설계서 | docs (main 직접) | 직접 | 대기 |
+
+완료 기준: 전체 테스트 통과 + 시뮬레이터 E2E 통과, F1b는 "동일 provider 2키 등록 시 실효
+rpm 2배 + 429 시 키 단위 쿨다운" E2E, F2는 골든 테이블이 실측 TTFT 순서(Research.md
+2026-07-11)와 정합, reload 후 세션 핀·버킷 상태 보존 테스트.
+
+---
+
+## 완료: M3 — 플랫폼화
 
 목표: 학습 루프 + 관측 가능성. 범위 결정은 DecisionLog(M3 범위 결정) 참조.
 진행 방식: 브랜치 `feat/m3-platform` → 로컬 squash merge.
