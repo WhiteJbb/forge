@@ -4,6 +4,68 @@
 
 ---
 
+## 2026-07-12 — 전면 분석 + F1–F4 스프린트 (feat/contracts-v2, feat/scoring-v2)
+
+### 배경
+
+사용자 요청으로 코드베이스 전면 분석 + 6개월 로드맵을 작성([Roadmap.md](Roadmap.md))
+하고, 최고난이도 4개 작업(F1–F4)을 즉시 실행. 멀티 인스턴스(StateStore/Redis)는
+사용자 결정으로 로드맵에서 제외(DecisionLog). 계약·감사·설계는 직접, 명세가 명확한
+구현은 Opus/Sonnet 서브에이전트에 파일 소유권을 나눠 병렬 위임.
+
+### 한 일
+
+1. **전면 분석** (병렬 탐색 3트랙 + 직접 검증): 보안 2건 발견 — 시크릿 마스킹
+   정규식이 신규 8개 프로바이더 키 형식 미커버(`providers/base.py` `_SECRET_RE`),
+   CORS `*`+credentials 조합. 둘 다 로드맵 S1(Opus)에 배정 — 이번 스프린트 범위 아님.
+2. **F1a — Deps 불변 스냅샷** (`api/deps.py` 신설): reload가 `deps.*` 필드를 순차
+   대입해 요청이 신/구 컴포넌트를 섞어 볼 수 있던 창을 제거 — 컴포넌트 전체를 새로
+   조립한 뒤 `DepsRef.current` 참조 하나만 대입. API 모듈들의 openai.py 허브 결합도
+   해소(deps.py 분리).
+3. **F3 — 동시성 감사에서 실버그 2건 발견·수정**: reload(`forge guard` 실행 포함)
+   때마다 ① 세션 고정 맵 전멸(프롬프트 캐시 미스 유발) ② 스로틀 버킷 가득 리셋
+   (rpm 일시 초과 → 429 유발). `Scheduler.adopt_affinity`/`ProviderThrottle.adopt`로
+   이관. 그 외 감사 항목(throttle peek/consume race, 스트림 슬롯 누수, watcher 취소,
+   `_delayed_close`와 장수 스트림)은 기존 코드가 안전함을 확인 — 수정 불필요.
+4. **F1b — 멀티 API 키 로테이션** (DecisionLog "429는 키 귀책"): 스키마
+   (`api_key_envs`, 카탈로그 `{KEY_ENV}_2~_9` 관례 스캔)는 직접, throttle 키 단위
+   버킷/쿨다운 + 파이프라인 429 분기는 Opus, 카탈로그 스캔/doctor `keys: N`/문서는
+   Sonnet에 위임. 가용 키가 남으면 모델 무귀책으로 같은 후보를 다른 키로 재시도.
+5. **F1c — auth 확장 계약**: Azure `api_version` + AWS `aws:{...}` SigV4 env 블록
+   스키마와 litellm kwargs 스레딩까지 (카탈로그 등재는 S6).
+6. **F2 — 스코어링 v2**: 레이턴시 점수를 로그 스케일(200ms→10점 ~ 30s→0점)로 교체해
+   2초 포화 해소, `speed` 시드(기존 dead data)를 콜드 스타트 prior로 — speed 7=중립
+   5.0 앵커라 미시드 모델은 v1과 동작 동일. 골든 라우팅 하네스 9건으로 기대 순위 고정.
+7. **F4 — 섀도 평가 설계서** ([ShadowEvaluation.md](ShadowEvaluation.md)): tuner의
+   반사실 부재를 메우는 섀도 라우팅 + pairwise judge 설계. 편향 방어를 구조로
+   (순서 랜덤화, 타 provider judge 강제), 비용 3중 가드(기본 무료-only). 열린 결정
+   4건은 사용자 확인 대기 — S5 구현의 입력.
+
+### 산출물 / 검증
+
+- PR #4 (feat/contracts-v2): F1a/b/c + F3 — 전체 266건 테스트 통과
+- PR #5 (feat/scoring-v2, #4에 스택): F2 — 전체 275건 통과 (골든 9건 포함)
+- **PR 머지는 권한 정책상(사람 리뷰 없는 자가 머지 차단) 사용자 대기** — #4 먼저
+  squash 머지 후 #5를 main으로 리베이스해 머지해야 함
+- main 직접 커밋(문서): Roadmap.md, Plan/DecisionLog 갱신, ShadowEvaluation.md, 본 기록
+
+### 남은 문제 및 다음 할 일
+
+- [ ] 사용자: PR #4 → #5 순서로 리뷰·머지 (#5는 #4 머지 후 리베이스 필요할 수 있음)
+- [ ] 보안 2건(마스킹 정규식 카탈로그 연동, CORS 잠금)은 로드맵 S1 첫 작업 — 미착수
+- [ ] 멀티 키 실검증: 실제 2키 환경에서 `forge doctor` + 429 유도 확인 (사용자 환경)
+- [ ] mid-stream 429는 멀티 키여도 모델 귀책 (설계상 한계 — openai.py 주석 참조)
+- [ ] ShadowEvaluation.md 열린 결정 4건 사용자 확인 → S5 착수 조건
+
+### Learning Recovery
+
+- reload 상태 소실 버그 2건은 코드 정독 중 발견한 것 — "reload가 상태를 이관하는가"를
+  상태 종류별로 체크리스트화하면(health/핀/버킷/카운터) 같은 유형 누락을 구조적으로 방지.
+- 스코어 공식 변경은 골든 하네스를 먼저 만들고 바꾸는 순서가 옳았다 — 앵커
+  (speed 7=중립 5.0)를 하위 호환 증명에 썼다.
+- 다음에 직접 설명해볼 질문: ① 429 키 귀책 시 세션 핀이 같은 모델 재선택을
+  보장하는 경로 ② adopt()가 세마포어 "객체"를 공유해야 하는 이유.
+
 ## 2026-07-11 — 속도 기반 라우팅 정책 확장 (feat/paid-provider-catalog, 계속)
 
 ### 배경
