@@ -40,7 +40,7 @@ rpm 토큰 버킷과 429 쿨다운을 **키 단위**로 관리한다. 429 발생
 동일 맥락). max_concurrent 세마포어는 키가 아니라 인프라 동시성이므로 provider
 단위 유지.
 
-
+## 2026-07-09 — M3 범위 결정 (Approval Gates)
 
 **결정**:
 - ① Dashboard는 PRD의 Next.js 대신 **FastAPI가 서빙하는 내장 정적 SPA**(단일 HTML) — pip 설치만으로 동작해야 하는 도구 특성상 Node 툴체인 요구는 채택 장벽. DESIGN.md §5.10 갱신
