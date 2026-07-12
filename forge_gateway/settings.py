@@ -30,14 +30,49 @@ class AuthConfig(BaseModel):
         return os.environ.get(self.api_key_env, "")
 
 
+def _reject_literal_key(v: str, field: str) -> str:
+    # 환경변수 "이름"이어야 한다 — 키 문자열이 직접 들어오면 거부 (§8.3)
+    if v and (v.startswith("sk-") or v.startswith("nvapi-") or len(v) > 64):
+        raise ValueError(
+            f"{field} must be an environment variable NAME, not the key itself"
+        )
+    return v
+
+
+class AwsAuthConfig(BaseModel):
+    """AWS SigV4 자격 계약 (Bedrock, §5.1 확장) — 값은 전부 환경변수 이름으로만.
+
+    스키마·kwargs 스레딩까지가 이 계약의 범위다. 카탈로그 등재·실검증은
+    별도 작업(Roadmap S6, 기존 P6 보류의 해제 조건).
+    """
+
+    access_key_env: str
+    secret_key_env: str
+    session_token_env: Optional[str] = None
+    region: str
+
+    @field_validator("access_key_env", "secret_key_env", "session_token_env")
+    @classmethod
+    def _no_literal(cls, v: Optional[str]) -> Optional[str]:
+        return _reject_literal_key(v, "aws.*_env") if v else v
+
+
 class ProviderConfig(BaseModel):
     name: str
     litellm_prefix: str = "openai"
     api_base: Optional[str] = None
     api_key_env: Optional[str] = None
+    # 멀티 API 키 로테이션 (DecisionLog 2026-07-12): 같은 provider에 키 여러 개를
+    # 등록해 무료 티어 한도를 곱한다. rpm 버킷·429 쿨다운은 "키 단위"(core/throttle.py),
+    # max_concurrent 세마포어는 인프라 동시성이라 provider 단위 유지.
+    # api_key_envs가 있으면 api_key_env보다 우선한다 (겸용 시 목록만 사용).
+    api_key_envs: list[str] = Field(default_factory=list)
+    # Azure OpenAI 계약 (§5.1 확장): litellm kwargs로 스레딩만, 카탈로그 등재는 S6
+    api_version: Optional[str] = None
+    aws: Optional[AwsAuthConfig] = None
     discovery: bool = True
     free: bool = False
-    rpm: Optional[int] = None
+    rpm: Optional[int] = None  # 키 "하나당" 분당 요청 한도 (§5.13)
     max_concurrent: Optional[int] = None
     pass_reasoning: bool = False
     auto_registered: bool = False  # 카탈로그 자동 등록 여부 (로그/doctor 표시용)
@@ -45,16 +80,37 @@ class ProviderConfig(BaseModel):
     @field_validator("api_key_env")
     @classmethod
     def _no_literal_keys(cls, v: Optional[str]) -> Optional[str]:
-        # 환경변수 "이름"이어야 한다 — 키 문자열이 직접 들어오면 거부 (§8.3)
-        if v and (v.startswith("sk-") or v.startswith("nvapi-") or len(v) > 64):
-            raise ValueError(
-                "api_key_env must be an environment variable NAME, not the key itself"
-            )
+        return _reject_literal_key(v, "api_key_env") if v else v
+
+    @field_validator("api_key_envs")
+    @classmethod
+    def _no_literal_key_list(cls, v: list[str]) -> list[str]:
+        seen = set()
+        for name in v:
+            _reject_literal_key(name, "api_key_envs")
+            if name in seen:
+                raise ValueError(f"api_key_envs has duplicate entry {name!r}")
+            seen.add(name)
         return v
 
     @property
+    def api_key_env_names(self) -> list[str]:
+        """유효 키 환경변수 이름 목록 — api_key_envs 우선, 없으면 api_key_env 단수."""
+        if self.api_key_envs:
+            return list(self.api_key_envs)
+        return [self.api_key_env] if self.api_key_env else []
+
+    @property
+    def api_keys(self) -> list[str]:
+        """해석된 키 값 목록 (빈 값 제외, 선언 순서 유지) — 인덱스가 곧 key_index."""
+        values = (os.environ.get(n, "").strip() for n in self.api_key_env_names)
+        return [v for v in values if v]
+
+    @property
     def api_key(self) -> str:
-        return os.environ.get(self.api_key_env, "") if self.api_key_env else ""
+        """대표 키(첫 번째) — probe/list_models 등 단일 키 경로용 (하위 호환)."""
+        keys = self.api_keys
+        return keys[0] if keys else ""
 
 
 class ModelOverride(BaseModel):
@@ -432,6 +488,20 @@ PROVIDER_CATALOG: "list[dict]" = [
 ]
 
 
+def _scan_extra_key_envs(key_env: str) -> "list[str]":
+    """`{key_env}_2`..`{key_env}_9`를 순서대로 스캔해 값이 있는 환경변수 이름만 모은다.
+
+    중간 번호가 비어 있어도(_2 없고 _3 있음) 건너뛰고 계속 스캔한다 — 사용자가 키를
+    회수/추가하며 번호가 듬성듬성해질 수 있으므로 연속성을 요구하지 않는다.
+    """
+    found = []
+    for i in range(2, 10):
+        candidate = f"{key_env}_{i}"
+        if os.environ.get(candidate, "").strip():
+            found.append(candidate)
+    return found
+
+
 def apply_auto_providers(config: "ForgeConfig") -> "list[str]":
     """카탈로그 기반 자동 등록. 추가된 provider 이름 목록을 반환한다."""
     if not config.auto_providers:
@@ -442,21 +512,36 @@ def apply_auto_providers(config: "ForgeConfig") -> "list[str]":
         name = item["name"]
         if name in declared:
             continue  # 명시 선언 우선
+        # 기본 키(key_env)가 없으면 provider 자체를 등록하지 않는다 — _2만 있고 본 키가
+        # 없는 경우도 여기서 걸러진다(단순성 유지, 스펙 §1).
         key_value = os.environ.get(item["key_env"], "").strip()
         if not key_value:
             continue
         api_base = key_value if item.get("api_base_from_env") else item.get("api_base")
-        config.providers.append(ProviderConfig(
+
+        # 멀티 키 로테이션 관례 (DecisionLog 2026-07-12): api_base_from_env 항목(ollama,
+        # 값 자체가 base URL)은 "키"가 아니므로 스캔 대상에서 제외한다.
+        extra_key_envs = (
+            [] if item.get("api_base_from_env") else _scan_extra_key_envs(item["key_env"])
+        )
+
+        provider_kwargs: dict = dict(
             name=name,
             litellm_prefix=item.get("litellm_prefix", "openai"),
             api_base=api_base,
-            api_key_env=None if item.get("api_base_from_env") else item["key_env"],
             discovery=item.get("discovery", True),
             free=item.get("free", False),
             rpm=item.get("rpm"),
             max_concurrent=item.get("max_concurrent"),
             auto_registered=True,
-        ))
+        )
+        if extra_key_envs:
+            provider_kwargs["api_key_envs"] = [item["key_env"]] + extra_key_envs
+        else:
+            provider_kwargs["api_key_env"] = (
+                None if item.get("api_base_from_env") else item["key_env"]
+            )
+        config.providers.append(ProviderConfig(**provider_kwargs))
         for model_id in item.get("default_models", []):
             config.models.append(ModelOverride(id=f"{name}:{model_id}"))
         for model_id, seed in item.get("capability_seed", {}).items():

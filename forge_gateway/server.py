@@ -112,7 +112,7 @@ def create_app(config_path: str = "forge.yaml") -> FastAPI:
         await runtime["tuner"].stop()
         await runtime["monitor"].stop()
         await metrics.stop()  # 큐 flush 포함
-        for provider in deps.providers.values():
+        for provider in ref.current.providers.values():
             await provider.close()
         logger.info("Forge stopped")
 
@@ -157,11 +157,11 @@ def create_app(config_path: str = "forge.yaml") -> FastAPI:
         return await call_next(request)
 
     require_key = make_auth_dependency(config.auth)
-    deps = openai_api.Deps(
+    ref = openai_api.DepsRef(openai_api.Deps(
         config=config, registry=registry, scheduler=scheduler,
         analyzer=analyzer, metrics=metrics, providers=providers,
         policy=policy, throttle=throttle,
-    )
+    ))
 
     reload_lock = asyncio.Lock()
     background_tasks: set = set()  # create_task 결과의 강한 참조 (GC 방지, 리뷰 #8)
@@ -169,15 +169,18 @@ def create_app(config_path: str = "forge.yaml") -> FastAPI:
     async def reload_config_fn() -> dict:
         """forge.yaml 핫 리로드 — 검증 통과 시에만 원자적 교체 (§5.9).
 
-        health 상태는 이관하고, in-flight 요청은 구 provider로 완주(지연 close).
-        server/auth 항목 변경은 재시작이 필요하다.
+        컴포넌트를 전부 새로 조립한 뒤 ref.current 참조 "하나"만 대입한다 —
+        요청은 시작 시점 스냅샷으로 끝까지 처리되므로 신/구 혼합 창이 없다.
+        health·세션 고정·스로틀 잔량은 이관하고, in-flight 요청은 구 provider로
+        완주(지연 close). server/auth 항목 변경은 재시작이 필요하다.
         """
         async with reload_lock:
             new_config = load_config(config_path)  # ConfigError는 admin에서 400 처리
+            old = ref.current
 
             new_registry = Registry(new_config)
             # discovery로 등록됐던 모델을 재등록해 리로드로 사라지지 않게 유지
-            for old_entry in deps.registry.all():
+            for old_entry in old.registry.all():
                 if (new_registry.get(old_entry.id) is None
                         and old_entry.source == "discovered"
                         and new_config.provider(old_entry.provider) is not None):
@@ -186,7 +189,7 @@ def create_app(config_path: str = "forge.yaml") -> FastAPI:
             # 기존 health(쿨다운·레이턴시·윈도) 이관 — 리로드가 낙인/학습을 지우면 안 됨.
             # ewma_alpha는 설정이 바뀌었을 수 있으므로 새 값으로 갱신 (리뷰 #12)
             for entry in new_registry.all():
-                old_entry = deps.registry.get(entry.id)
+                old_entry = old.registry.get(entry.id)
                 if old_entry is not None:
                     entry.health = old_entry.health
                     entry.health._alpha = new_config.scheduler.latency_ewma_alpha
@@ -195,20 +198,24 @@ def create_app(config_path: str = "forge.yaml") -> FastAPI:
             new_providers = {p.name: make_provider(p, new_config.timeouts)
                              for p in new_config.providers}
             new_health = HealthMonitor(new_registry, new_providers, new_config.health)
+            new_scheduler = Scheduler(new_config, new_registry)
+            new_scheduler.adopt_affinity(old.scheduler)  # 세션 핀 보존 (§5.9)
+            new_throttle = ProviderThrottle(new_config.providers)
+            if old.throttle is not None:
+                new_throttle.adopt(old.throttle)  # 버킷 잔량·세마포어 보존 (§5.9)
 
             await runtime["tuner"].stop()
             await runtime["monitor"].stop()
-            old_providers = dict(deps.providers)
+            old_providers = dict(old.providers)
 
-            # 원자적 교체 — 이후 요청은 전부 새 참조를 본다
-            deps.config = new_config
-            deps.registry = new_registry
-            deps.scheduler = Scheduler(new_config, new_registry)
-            deps.policy = PolicyEngine(new_config, new_registry)
-            deps.throttle = ProviderThrottle(new_config.providers)
-            deps.providers = new_providers
+            # 원자적 교체 — 스냅샷 하나를 새로 만들어 참조 대입 한 번으로 끝낸다.
+            # metrics/analyzer는 장수 컴포넌트라 재사용 (api/deps.py 계약)
+            ref.current = openai_api.Deps(
+                config=new_config, registry=new_registry, scheduler=new_scheduler,
+                analyzer=analyzer, metrics=metrics, providers=new_providers,
+                policy=PolicyEngine(new_config, new_registry), throttle=new_throttle,
+            )
 
-            new_throttle = deps.throttle  # 위에서 이미 교체됨
             new_prom = PromExporter(new_registry, new_throttle)
             metrics.on_record = new_prom.on_record
             new_tuner = CapabilityTuner(new_registry, metrics, new_config.tuner)
@@ -243,11 +250,11 @@ def create_app(config_path: str = "forge.yaml") -> FastAPI:
                 "note": "server/auth section changes require a restart",
             }
 
-    app.include_router(openai_api.build_router(deps), dependencies=[Depends(require_key)])
-    app.include_router(anthropic_api.build_router(deps), dependencies=[Depends(require_key)])
-    app.include_router(observe_api.build_router(deps, runtime, require_key))
+    app.include_router(openai_api.build_router(ref), dependencies=[Depends(require_key)])
+    app.include_router(anthropic_api.build_router(ref), dependencies=[Depends(require_key)])
+    app.include_router(observe_api.build_router(ref, runtime, require_key))
     # /admin/*: loopback 제한(라우터 내부) + API 키 이중 검증 (§5.8 계약, 리뷰 #5)
-    app.include_router(admin_api.build_router(deps, reload_config_fn),
+    app.include_router(admin_api.build_router(ref, reload_config_fn),
                        dependencies=[Depends(require_key)])
 
     @app.get("/")
@@ -261,6 +268,7 @@ def create_app(config_path: str = "forge.yaml") -> FastAPI:
         }
 
     app.state.forge_config = config
+    app.state.forge_deps_ref = ref  # 테스트/도구 관측용 — reload 상태 보존 검증 (§5.9)
     return app
 
 

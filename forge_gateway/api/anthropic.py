@@ -8,11 +8,14 @@ Analyzer→Policy→Scheduler 파이프라인에 태우고, 응답을 Anthropic 
 클라이언트 설정: ANTHROPIC_BASE_URL=http://127.0.0.1:4000
 """
 
+from typing import Union
+
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
 from .anthropic_convert import request_to_openai
-from .openai import ChatPipeline, Deps
+from .deps import Deps, DepsRef
+from .openai import ChatPipeline, _resolve
 
 
 def _anthropic_error(message: str, status_code: int,
@@ -23,11 +26,13 @@ def _anthropic_error(message: str, status_code: int,
     )
 
 
-def build_router(deps: Deps) -> APIRouter:
+def build_router(deps_or_ref: Union[Deps, DepsRef]) -> APIRouter:
+    ref = _resolve(deps_or_ref)
     router = APIRouter()
 
     @router.post("/v1/messages")
     async def messages(request: Request):
+        deps = ref.current  # 요청당 스냅샷 1회 읽기 (§5.9)
         try:
             body = await request.json()
         except Exception:

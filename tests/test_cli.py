@@ -163,6 +163,43 @@ class DoctorCommandTests(_EnvIsolatedTestCase):
         self.assertIn("UpstreamConnectionError", text)
         self.assertNotIn("Traceback", text)
 
+    def test_multi_key_provider_shows_keys_count(self):
+        """멀티 키 provider(api_key_envs 2개 이상)는 doctor 출력에 'keys: N'을 덧붙인다
+        (DecisionLog 2026-07-12) — 기존 컬럼 포맷은 그대로 유지된다."""
+        self.config_path.write_text(
+            "version: 1\n"
+            "providers:\n"
+            "  - name: nvidia\n"
+            "    api_key_envs: [NVIDIA_API_KEY, NVIDIA_API_KEY_2]\n",
+            encoding="utf-8",
+        )
+        os.environ["NVIDIA_API_KEY"] = "dummy1"
+        os.environ["NVIDIA_API_KEY_2"] = "dummy2"
+        args = self._parse(["doctor", "--config", str(self.config_path)])
+
+        with mock.patch.object(cli, "_list_provider_models", return_value=(True, 5, None)):
+            out = io.StringIO()
+            with redirect_stdout(out):
+                code = cli.cmd_doctor(args)
+
+        text = out.getvalue()
+        self.assertEqual(code, 0)
+        self.assertIn("Overall: OK", text)
+        self.assertIn("keys: 2", text)
+
+    def test_single_key_provider_does_not_show_keys_count(self):
+        self._write_nvidia_config()
+        os.environ["NVIDIA_API_KEY"] = "dummy"
+        args = self._parse(["doctor", "--config", str(self.config_path)])
+
+        with mock.patch.object(cli, "_list_provider_models", return_value=(True, 5, None)):
+            out = io.StringIO()
+            with redirect_stdout(out):
+                code = cli.cmd_doctor(args)
+
+        self.assertEqual(code, 0)
+        self.assertNotIn("keys:", out.getvalue())
+
     def test_no_providers_configured_is_not_a_failure(self):
         self.config_path.write_text("version: 1\n", encoding="utf-8")
         args = self._parse(["doctor", "--config", str(self.config_path)])

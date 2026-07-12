@@ -5,7 +5,9 @@
 """
 
 import asyncio
+import os
 import unittest
+from unittest import mock
 
 from forge_gateway.core.throttle import ProviderThrottle
 from forge_gateway.settings import ProviderConfig
@@ -108,6 +110,100 @@ class TokenBucketTest(unittest.TestCase):
             snap["unlimited"],
             {"tokens_remaining": None, "rpm": None, "in_flight": 0, "max_concurrent": None},
         )
+
+
+_MK_ENV = {"MK_KEY_1": "sk-key-one", "MK_KEY_2": "sk-key-two"}
+
+
+def _multikey_throttle(clock=None, rpm=2, env=None):
+    """api_keys가 생성 시점에 해석되므로 env를 패치한 채로 구성한다."""
+    with mock.patch.dict(os.environ, env or _MK_ENV, clear=False):
+        providers = [
+            ProviderConfig(name="multi", rpm=rpm,
+                           api_key_envs=["MK_KEY_1", "MK_KEY_2"]),
+        ]
+        return ProviderThrottle(providers, clock=clock or FakeClock())
+
+
+class MultiKeyTest(unittest.TestCase):
+    def test_num_keys_resolved_at_construction(self):
+        thr = _multikey_throttle()
+        self.assertEqual(thr.num_keys("multi"), 2)
+        self.assertEqual(thr.num_keys("ghost"), 1)  # 미등록은 1
+
+    def test_capacity_is_per_key(self):
+        # rpm=2, 키 2개 → acquire 4회 성공, 5회째 None
+        thr = _multikey_throttle(rpm=2)
+        indices = [thr.acquire("multi") for _ in range(4)]
+        self.assertTrue(all(i is not None for i in indices))
+        self.assertEqual(sorted(i for i in indices), [0, 0, 1, 1])  # 키당 2회씩
+        self.assertIsNone(thr.acquire("multi"))
+        self.assertFalse(thr.peek("multi"))
+
+    def test_cooldown_key_is_skipped(self):
+        clock = FakeClock()
+        thr = _multikey_throttle(clock=clock, rpm=5)
+        thr.cooldown_key("multi", 0, 100.0)  # 키0을 100초 쿨다운
+        # 쿨다운 아닌 키1만 선택돼야 한다
+        for _ in range(5):
+            self.assertEqual(thr.acquire("multi"), 1)
+        self.assertIsNone(thr.acquire("multi"))  # 키1 소진, 키0 여전히 쿨다운
+        self.assertFalse(thr.peek("multi"))
+        clock.advance(100.0)  # 키0 쿨다운 해제 (키1도 리필됨)
+        self.assertTrue(thr.peek("multi"))
+        got = {thr.acquire("multi") for _ in range(4)}
+        self.assertIn(0, got)  # 키0이 다시 선택 가능
+
+    def test_refund_targets_the_key(self):
+        thr = _multikey_throttle(rpm=2)
+        self.assertEqual(thr.acquire("multi"), 0)  # 키0 tokens 2→1
+        thr.refund("multi", 0)  # 키0 tokens 1→2
+        keys = {k["index"]: k["tokens_remaining"] for k in thr.snapshot()["multi"]["keys"]}
+        self.assertEqual(keys[0], 2)
+        self.assertEqual(keys[1], 2)
+
+    def test_pick_key_does_not_consume(self):
+        thr = _multikey_throttle(rpm=2)
+        before = thr.snapshot()["multi"]["tokens_remaining"]
+        idx = thr.pick_key("multi")
+        self.assertIn(idx, (0, 1))
+        self.assertEqual(thr.snapshot()["multi"]["tokens_remaining"], before)
+
+    def test_pick_key_returns_zero_when_none_available(self):
+        thr = _multikey_throttle(rpm=2)
+        for _ in range(4):
+            thr.acquire("multi")  # 전 키 소진
+        self.assertEqual(thr.pick_key("multi"), 0)  # None이 아니라 0
+
+    def test_snapshot_keys_field(self):
+        clock = FakeClock()
+        thr = _multikey_throttle(clock=clock, rpm=3)
+        thr.acquire("multi")  # 키0 3→2
+        thr.cooldown_key("multi", 1, 30.0)
+        snap = thr.snapshot()["multi"]
+        self.assertEqual(snap["rpm"], 3)  # 키당 rpm
+        self.assertEqual(snap["tokens_remaining"], 2 + 3)  # 전 키 합
+        keys = {k["index"]: k for k in snap["keys"]}
+        self.assertEqual(keys[0]["tokens_remaining"], 2)
+        self.assertEqual(keys[0]["cooldown_remaining_s"], 0.0)  # 쿨다운 아님
+        self.assertEqual(keys[1]["cooldown_remaining_s"], 30.0)
+
+    def test_single_key_has_no_keys_field(self):
+        thr = _throttle()  # nvidia는 키 1개(env 없음)
+        self.assertNotIn("keys", thr.snapshot()["nvidia"])
+
+    def test_adopt_preserves_per_key_state(self):
+        clock = FakeClock()
+        old = _multikey_throttle(clock=clock, rpm=3)
+        old.acquire("multi")  # 키0 3→2
+        old.acquire("multi")  # 키1 3→2 (라운드로빈)
+        old.cooldown_key("multi", 0, 50.0)
+        new = _multikey_throttle(clock=clock, rpm=3)
+        new.adopt(old)
+        snap = new.snapshot()["multi"]
+        self.assertEqual(snap["tokens_remaining"], 2 + 2)  # 잔량 보존
+        keys = {k["index"]: k for k in snap["keys"]}
+        self.assertEqual(keys[0]["cooldown_remaining_s"], 50.0)  # 쿨다운 보존
 
 
 class SlotTest(unittest.IsolatedAsyncioTestCase):

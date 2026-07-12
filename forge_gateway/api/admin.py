@@ -4,19 +4,23 @@
 기존 모델의 health 상태는 보존되고, in-flight 요청은 구 참조로 완주한다.
 """
 
+from typing import Union
+
 from fastapi import APIRouter, Depends, HTTPException
 
 from ..settings import ConfigError
 from .auth import require_loopback
-from .openai import Deps
+from .deps import Deps, DepsRef
+from .openai import _resolve
 
 
-def build_router(deps: Deps, reload_fn) -> APIRouter:
+def build_router(deps_or_ref: Union[Deps, DepsRef], reload_fn) -> APIRouter:
+    ref = _resolve(deps_or_ref)
     router = APIRouter(prefix="/admin", dependencies=[Depends(require_loopback)])
 
     @router.post("/cooldown/{model_id:path}/clear")
     async def clear_cooldown(model_id: str):
-        entry = deps.registry.get(model_id)
+        entry = ref.current.registry.get(model_id)
         if entry is None:
             raise HTTPException(status_code=404, detail=f"unknown model {model_id!r}")
         entry.health.status = "unknown"

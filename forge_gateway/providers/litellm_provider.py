@@ -180,6 +180,7 @@ class LiteLLMProvider:
         *,
         stream: bool,
         timeout: float,
+        key_index: int = 0,
     ) -> dict[str, Any]:
         kwargs = dict(payload)  # 클라이언트 payload 얕은 복사
         kwargs.pop("model", None)  # 클라이언트가 준 model은 provider_model_id로 대체
@@ -189,8 +190,21 @@ class LiteLLMProvider:
         kwargs["timeout"] = timeout
         if self.config.api_base:
             kwargs["api_base"] = self.config.api_base
-        if self.config.api_key:
-            kwargs["api_key"] = self.config.api_key
+        keys = self.config.api_keys
+        if keys:
+            # key_index는 throttle이 고른 키 슬롯 (§5.13 멀티 키 로테이션).
+            # 범위 밖이면 대표 키로 폴백 — 리로드로 키 수가 줄어든 직후의 방어선
+            kwargs["api_key"] = keys[key_index] if 0 <= key_index < len(keys) else keys[0]
+        if self.config.api_version:  # Azure 계약 (§5.1 확장)
+            kwargs["api_version"] = self.config.api_version
+        if self.config.aws is not None:  # Bedrock SigV4 계약 (§5.1 확장)
+            import os as _os
+            aws = self.config.aws
+            kwargs["aws_access_key_id"] = _os.environ.get(aws.access_key_env, "")
+            kwargs["aws_secret_access_key"] = _os.environ.get(aws.secret_key_env, "")
+            kwargs["aws_region_name"] = aws.region
+            if aws.session_token_env:
+                kwargs["aws_session_token"] = _os.environ.get(aws.session_token_env, "")
         if stream:
             kwargs["stream"] = True
             # usage 강제 수집 — include_usage 항상 주입 (§5.8)
@@ -270,9 +284,11 @@ class LiteLLMProvider:
 
     # ---- Provider 프로토콜 구현 ----------------------------------------
 
-    async def chat(self, provider_model_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+    async def chat(self, provider_model_id: str, payload: dict[str, Any],
+                   *, key_index: int = 0) -> dict[str, Any]:
         kwargs = self._build_kwargs(
-            provider_model_id, payload, stream=False, timeout=self.timeouts.total_deadline
+            provider_model_id, payload, stream=False,
+            timeout=self.timeouts.total_deadline, key_index=key_index,
         )
         try:
             resp = await litellm.acompletion(**kwargs)
@@ -281,10 +297,11 @@ class LiteLLMProvider:
         return self._normalize(resp)
 
     async def chat_stream(
-        self, provider_model_id: str, payload: dict[str, Any]
+        self, provider_model_id: str, payload: dict[str, Any], *, key_index: int = 0
     ) -> AsyncIterator[dict[str, Any]]:
         kwargs = self._build_kwargs(
-            provider_model_id, payload, stream=True, timeout=self.timeouts.total_deadline
+            provider_model_id, payload, stream=True,
+            timeout=self.timeouts.total_deadline, key_index=key_index,
         )
         try:
             stream = await litellm.acompletion(**kwargs)

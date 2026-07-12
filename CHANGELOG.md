@@ -7,6 +7,32 @@ pre-1.0 (see [DESIGN.md](DESIGN.md) for the milestone plan); versioning is not y
 
 ## [Unreleased]
 
+### Added
+
+- **Multi-API-key rotation**: register several keys for the same provider
+  (`providers[].api_key_envs`, or just drop `NVIDIA_API_KEY_2`..`_9` style variables in
+  `.env` for auto-registered providers) and the per-provider `rpm` limit multiplies —
+  token buckets and 429 cooldowns are now tracked **per key**. A 429 cools only the
+  exhausted key and the same model is retried with another key; the model itself is
+  cooled only when every key is exhausted. Single-key providers behave exactly as
+  before. `forge doctor` shows `keys: N` for multi-key providers.
+- Provider auth contract groundwork for Azure OpenAI (`providers[].api_version`) and
+  AWS Bedrock (`providers[].aws` SigV4 env-name block) — schema and litellm kwargs
+  threading only; catalog entries come later.
+
+### Changed
+
+- Hot reload now swaps one immutable dependency snapshot (`api/deps.py`) instead of
+  mutating shared references field by field, removing a window where a request could
+  observe a mix of old and new components.
+
+### Fixed
+
+- Hot reload (including every `forge guard` invocation) used to silently drop all
+  session-affinity pins and reset rate-limit buckets to full — breaking prompt-cache
+  hits and briefly exceeding provider rpm limits. Session pins, per-key bucket levels,
+  and concurrency semaphores now carry over across reloads.
+
 ## [0.3.0] - 2026-07-11
 
 ### Added
