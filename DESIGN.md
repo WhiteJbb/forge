@@ -281,7 +281,7 @@ policies:
 ```text
 Score = 0.30·Capability(task)      # capability matrix
       + 0.15·Health               # healthy=10 / unknown=5 / cooldown·unhealthy=0
-      + 0.15·Latency              # EWMA 기반, 100ms→10점 ~ 2000ms→0점
+      + 0.15·Latency              # EWMA 기반 로그 스케일, 200ms→10점 ~ 30s→0점 (v2)
       + 0.10·Availability         # 최근 성공률 (슬라이딩 윈도)
       + 0.10·ContextFit           # est_tokens ≤ 0.5·ctx → 10, ≥ 0.9·ctx → 0
       + 0.10·TierPriority         # tier1=10, tier2=6, tier3=3
@@ -290,6 +290,7 @@ Score = 0.30·Capability(task)      # capability matrix
 ```
 
 - **레이턴시는 EWMA** (`ewma = 0.3·new + 0.7·old`)로 전환 — 현재는 마지막 값 하나라 스파이크에 취약. **스트리밍 요청은 TTFT(첫 토큰까지 시간)를 레이턴시 신호로 사용**한다 — 총 소요 시간은 출력 길이에 좌우되어 라우팅 신호로 부적합하고, 코딩 에이전트의 체감 속도는 TTFT가 결정한다. 논스트리밍은 총 레이턴시 유지.
+- **레이턴시 점수 v2 (2026-07-12, DecisionLog)**: 선형 구간(100ms→10 ~ 2000ms→0)은 2초 이상을 전부 0점으로 포화시켜 실측 1.5s와 18s를 동점 처리했다(같은 모델이 호스팅에 따라 TTFT 10배 차 — Research.md 2026-07-11). **로그 스케일**(200ms 이하 10점, 30초 이상 0점, 사이 log10 선형)로 교체. **콜드 스타트(실측 없음)는 `speed` capability 시드를 prior로 환산** — speed 7(기본값)=중립 5.0 앵커라 시드 없는 모델은 기존 동작과 동일하고, 첫 실측이 들어오면 prior는 무시된다. 이로써 §5.11 시드의 `speed` 필드가 dead data에서 실제 라우팅 신호가 된다. 기대 순위는 골든 하네스(`tests/test_scheduler_golden.py`)로 고정.
 - **Availability는 슬라이딩 윈도(최근 50건)** — 현재의 누적 전체 실패율은 과거 장애가 영구 낙인이 됨.
 - 동률권(최고점의 90% 이상) 내 랜덤 선택은 유지 — 사실상의 least-busy 분산 효과.
 - **Cooldown 규칙 (PRD 정합화)**:

@@ -25,6 +25,12 @@ pre-1.0 (see [DESIGN.md](DESIGN.md) for the milestone plan); versioning is not y
 - Hot reload now swaps one immutable dependency snapshot (`api/deps.py`) instead of
   mutating shared references field by field, removing a window where a request could
   observe a mix of old and new components.
+- Scoring v2: the latency partial score is now log-scale (10 points at ≤200ms TTFT down
+  to 0 at ≥30s) instead of saturating at 2s — measured 1.5s and 18s hosts of the same
+  model no longer tie. Models with no measurements yet use their seeded `speed`
+  capability as a latency prior (seed 7 maps exactly to the old neutral score, so
+  unseeded models behave as before); the first real measurement overrides the prior.
+  Expected rankings are pinned by a golden routing harness (`tests/test_scheduler_golden.py`).
 
 ### Fixed
 
