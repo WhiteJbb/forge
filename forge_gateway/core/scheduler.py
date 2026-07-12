@@ -88,6 +88,12 @@ class Scheduler:
         self._registry = registry
         self._affinity = SessionAffinity(config.scheduler.session_ttl_minutes)
 
+    def adopt_affinity(self, old: "Scheduler") -> None:
+        """reload 시 세션 고정을 이관한다 (§5.9) — 리로드가 프롬프트 캐시 적중과
+        대화 내 일관성을 지우면 안 된다. 기존 엔트리의 만료 시각은 그대로 유지되고,
+        새 TTL 설정은 이후 pin부터 적용된다."""
+        self._affinity._map = old._affinity._map
+
     # --- 선택 ---
 
     def select(

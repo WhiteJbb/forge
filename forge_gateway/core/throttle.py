@@ -77,6 +77,26 @@ class ProviderThrottle:
             if p.max_concurrent is not None:
                 self._sems[p.name] = asyncio.Semaphore(p.max_concurrent)
 
+    def adopt(self, old: "ProviderThrottle") -> None:
+        """reload 시 스로틀 상태를 이관한다 (§5.9).
+
+        이관하지 않으면 리로드마다 버킷이 가득 찬 상태로 리셋돼 rpm 한도를
+        일시적으로 초과(429 유발)한다. 같은 이름·같은 rpm인 provider는 버킷
+        잔량을, 같은 max_concurrent인 provider는 세마포어 객체 자체를 물려받아
+        구 요청의 release가 새 스로틀에도 반영되게 한다. in_flight 카운터는
+        표시용이라 구 요청 종료 시점의 오차를 허용한다.
+        """
+        for name in self._known & old._known:
+            new_bucket, old_bucket = self._buckets.get(name), old._buckets.get(name)
+            if (new_bucket is not None and old_bucket is not None
+                    and new_bucket.capacity == old_bucket.capacity):
+                new_bucket.tokens = old_bucket.tokens
+                new_bucket.last = old_bucket.last
+            if (name in self._sems and name in old._sems
+                    and self._limits.get(name) == old._limits.get(name)):
+                self._sems[name] = old._sems[name]
+                self._in_flight[name] = old._in_flight.get(name, 0)
+
     def peek(self, provider_name: str) -> bool:
         """토큰을 소모하지 않고 여유가 있는지 확인 (Scheduler 후보 필터용)."""
         bucket = self._buckets.get(provider_name)

@@ -74,17 +74,21 @@ class Provider(Protocol):
       마지막 usage 청크도 그대로 yield한다 (제거 여부는 API 계층 책임, §5.8)
     - reasoning_content 등 비표준 필드는 pass_reasoning=False면 제거 (§5.1)
     - 모든 실패는 위의 typed exception으로 변환해서 던진다
+    - key_index: 멀티 키 로테이션(§5.13)에서 throttle이 고른 키 슬롯.
+      config.api_keys의 인덱스이며, 단일 키 provider는 항상 0.
+      probe/list_models/embeddings는 대표 키(0)만 쓴다.
     """
 
     name: str
     config: ProviderConfig
 
-    async def chat(self, provider_model_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+    async def chat(self, provider_model_id: str, payload: dict[str, Any],
+                   *, key_index: int = 0) -> dict[str, Any]:
         """논스트리밍 completion. OpenAI 응답 dict 반환."""
         ...
 
     def chat_stream(
-        self, provider_model_id: str, payload: dict[str, Any]
+        self, provider_model_id: str, payload: dict[str, Any], *, key_index: int = 0
     ) -> AsyncIterator[dict[str, Any]]:
         """스트리밍 completion. 첫 청크 이전 실패는 typed exception으로."""
         ...

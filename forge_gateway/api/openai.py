@@ -9,19 +9,15 @@ import json
 import logging
 import time
 import uuid
-from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Optional
+from typing import Any, Optional, Union
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
-from ..core.analyzer import RequestAnalyzer
-from ..core.metrics import MetricsEngine
-from ..core.policy import PolicyEngine, RoutePlan
-from ..core.registry import ModelEntry, Registry
-from ..core.scheduler import NoCandidateError, Scheduler
-from ..core.throttle import ProviderThrottle
+from ..core.policy import RoutePlan
+from ..core.registry import ModelEntry
+from ..core.scheduler import NoCandidateError
 from ..core.types import AnalysisResult
 from ..providers.base import (
     ContextLengthExceeded,
@@ -33,9 +29,11 @@ from ..providers.base import (
     UpstreamServerError,
     UpstreamTimeout,
 )
-from ..settings import ForgeConfig
 from ..storage.base import RequestMetric
 from . import anthropic_convert
+from .deps import Deps, DepsRef
+
+__all__ = ["ChatPipeline", "Deps", "DepsRef", "build_router"]  # Deps 재수출 (하위 호환)
 
 logger = logging.getLogger("forge.api")
 
@@ -43,18 +41,9 @@ VALID_TASKS = ("coding", "debug", "refactor", "documentation", "testing")
 AUTO_ALIASES = ("auto", "coder")  # "coder"는 기존 클라이언트 설정 호환
 
 
-@dataclass
-class Deps:
-    """server.py lifespan에서 조립되는 의존성 묶음"""
-
-    config: ForgeConfig
-    registry: Registry
-    scheduler: Scheduler
-    analyzer: RequestAnalyzer
-    metrics: MetricsEngine
-    providers: dict[str, Provider]
-    policy: Optional[PolicyEngine] = None  # None이면 기본 tier 라우팅 (하위 호환)
-    throttle: Optional[ProviderThrottle] = None  # None이면 선제 스로틀 없음
+def _resolve(deps_or_ref: Union[Deps, DepsRef]) -> "DepsRef":
+    """build_router 인자 정규화 — 테스트가 Deps를 직접 넘기는 기존 관례 수용."""
+    return deps_or_ref if isinstance(deps_or_ref, DepsRef) else DepsRef(deps_or_ref)
 
 
 def _utcnow_iso() -> str:
@@ -498,12 +487,14 @@ async def _aclose_quiet(agen) -> None:
 
 # --- 라우터 ---
 
-def build_router(deps: Deps) -> APIRouter:
+def build_router(deps_or_ref: Union[Deps, DepsRef]) -> APIRouter:
+    ref = _resolve(deps_or_ref)
     router = APIRouter()
 
     @router.post("/v1/chat/completions")
     @router.post("/chat/completions")
     async def chat_completions(request: Request):
+        deps = ref.current  # 요청당 스냅샷 1회 읽기 — reload 원자성 (§5.9)
         try:
             body = await request.json()
         except Exception:
@@ -514,6 +505,7 @@ def build_router(deps: Deps) -> APIRouter:
 
     @router.post("/v1/embeddings")
     async def embeddings(request: Request):
+        deps = ref.current
         try:
             body = await request.json()
         except Exception:
@@ -540,6 +532,7 @@ def build_router(deps: Deps) -> APIRouter:
     @router.post("/v1/route/explain")
     async def route_explain(request: Request):
         """드라이런 — 실제 호출 없이 판정·정책 매칭·탈락 사유·스코어표 반환 (§5.8)"""
+        deps = ref.current
         try:
             body = await request.json()
         except Exception:
@@ -593,6 +586,7 @@ def build_router(deps: Deps) -> APIRouter:
     @router.get("/v1/models")
     @router.get("/models")
     async def list_models():
+        deps = ref.current
         created = int(time.time())
         data = [{"id": e.id, "object": "model", "created": created, "owned_by": "forge"}
                 for e in deps.registry.all()]
