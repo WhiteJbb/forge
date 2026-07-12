@@ -20,6 +20,9 @@ class ServerConfig(BaseModel):
     port: int = 4000
     debug: bool = False
     max_body_mb: int = 20
+    # CORS 허용 오리진 (§8.3). 기본은 빈 목록 = CORS 미들웨어 비활성(브라우저
+    # cross-origin 접근 차단). 브라우저 앱을 붙일 때만 오리진을 명시적으로 나열한다.
+    cors_origins: list[str] = Field(default_factory=list)
 
 
 class AuthConfig(BaseModel):

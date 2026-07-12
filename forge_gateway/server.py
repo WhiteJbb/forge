@@ -29,7 +29,7 @@ from .core.registry import Registry
 from .core.scheduler import Scheduler
 from .core.throttle import ProviderThrottle
 from .core.tuner import CapabilityTuner
-from .providers.base import make_provider
+from .providers.base import make_provider, register_secrets
 from .settings import ConfigError, load_config
 
 logging.basicConfig(
@@ -60,6 +60,11 @@ def create_app(config_path: str = "forge.yaml") -> FastAPI:
             "server.host=%s는 loopback이 아닌데 FORGE_API_KEY가 설정되지 않았습니다 — "
             "누구나 이 주소로 접근해 등록된 provider API 키를 소모할 수 있습니다. "
             ".env에 FORGE_API_KEY를 설정하세요.", config.server.host)
+
+    # forge 자체 인증 키도 로그/에러 마스킹 대상으로 등록 (§8.3). provider 키는
+    # make_provider가 등록한다.
+    if config.auth.api_key:
+        register_secrets([config.auth.api_key])
 
     registry = Registry(config)
     fill_registry_prices(registry, config)  # litellm 가격표 폴백 (§5.12)
@@ -128,13 +133,22 @@ def create_app(config_path: str = "forge.yaml") -> FastAPI:
         lifespan=lifespan,
     )
 
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=["*"],
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
+    # CORS 기본 잠금 (§8.3): cors_origins가 비어 있으면(기본) CORSMiddleware를 아예
+    # 추가하지 않는다 — 브라우저 cross-origin 접근을 차단해, 무인증 로컬 모드에서 악성
+    # 웹페이지가 브라우저를 경유해 게이트웨이를 호출하고 응답을 탈취(drive-by 크레딧
+    # 소모)하는 것을 막는다. 같은 오리진인 /dashboard/ui는 CORS가 필요 없어 영향 없다.
+    # Cline/Aider/Claude Code 등 비브라우저 클라이언트는 CORS와 무관하므로 하위 호환
+    # 문제도 없다. 브라우저 앱을 붙이려면 server.cors_origins에 오리진을 명시한다.
+    if config.server.cors_origins:
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=config.server.cors_origins,
+            # 와일드카드("*")+credentials 조합은 Starlette가 Origin을 반사해 위험하므로
+            # 금지한다 — 명시적 오리진 목록일 때만 자격 증명 전송을 허용한다.
+            allow_credentials="*" not in config.server.cors_origins,
+            allow_methods=["*"],
+            allow_headers=["*"],
+        )
 
     max_body = config.server.max_body_mb * 1024 * 1024
 
