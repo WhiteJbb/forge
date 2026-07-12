@@ -49,13 +49,31 @@
   squash 머지 후 #5를 main으로 리베이스해 머지해야 함
 - main 직접 커밋(문서): Roadmap.md, Plan/DecisionLog 갱신, ShadowEvaluation.md, 본 기록
 
+### 후속 (같은 날, 사용자 결정 반영)
+
+- PR #4·#5 사용자 머지 완료. 단 **#5가 base=feat/contracts-v2로 머지되는 사고** —
+  스코어링 v2가 main에 못 들어가서 main 기준 체리픽으로 **PR #6** 재생성
+  (DecisionLog 충돌 수동 해소, 275건 통과). 교훈: 스택 PR은 base 승격을 명시적으로
+  관리하거나 처음부터 만들지 말 것.
+- **섀도 평가 열린 결정 확정** (사용자): 무료 기본 + 유료 opt-in(`daily_budget_usd`),
+  **대시보드에서 토글·예산·judge 선택** — ShadowEvaluation.md §9.1에 구현 계약 추가
+  (`forge.local.yaml` 오버레이 + `/admin/shadow`, guard/U5 패턴 재사용). A/B 2단계는
+  보류 유지.
+- **보안 2건 즉시 구현** (사용자 지시로 S1에서 앞당김, Opus 위임) → **PR #7**:
+  마스킹 이중 방어(접두어 정규식 csk-/xai-/fw_ 확장 + 등록 키 값 정확 일치 치환 —
+  접두어 없는 Together/Cohere류 키의 유일한 방어) + CORS 기본 잠금(기본 미들웨어
+  미추가, `server.cors_origins` opt-in, 와일드카드+credentials 금지). 273건 통과.
+- DecisionLog에서 이전 편집 때 유실됐던 "2026-07-09 M3 범위 결정" 제목 복원.
+
 ### 남은 문제 및 다음 할 일
 
-- [ ] 사용자: PR #4 → #5 순서로 리뷰·머지 (#5는 #4 머지 후 리베이스 필요할 수 있음)
-- [ ] 보안 2건(마스킹 정규식 카탈로그 연동, CORS 잠금)은 로드맵 S1 첫 작업 — 미착수
+- [ ] 사용자: **PR #6(스코어링 v2 → main), PR #7(보안)** 리뷰·머지 — 서로 파일 겹침
+      없어 순서 무관. 머지 후 원격 잔여 브랜치(feat/contracts-v2, feat/scoring-v2) 삭제
 - [ ] 멀티 키 실검증: 실제 2키 환경에서 `forge doctor` + 429 유도 확인 (사용자 환경)
 - [ ] mid-stream 429는 멀티 키여도 모델 귀책 (설계상 한계 — openai.py 주석 참조)
-- [ ] ShadowEvaluation.md 열린 결정 4건 사용자 확인 → S5 착수 조건
+- [ ] 섀도 평가(S5) 구현 착수 가능 — 설계·결정 완료 상태
+- [ ] 대시보드 정책 편집 UI(유료 멀티 API의 task별 배분을 GUI로) — 로드맵 반영 후보,
+      §9.1 제어 UI와 같은 스프린트로 묶으면 효율적
 
 ### Learning Recovery
 
